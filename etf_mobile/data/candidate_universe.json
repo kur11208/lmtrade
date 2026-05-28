@@ -1,0 +1,128 @@
+[
+  {
+    "symbol": "1321",
+    "name": "NF Nikkei 225 ETF",
+    "asset_class": "japan_equity",
+    "candidate": true
+  },
+  {
+    "symbol": "1306",
+    "name": "NF TOPIX ETF",
+    "asset_class": "japan_equity",
+    "candidate": true
+  },
+  {
+    "symbol": "1475",
+    "name": "iShares Core TOPIX ETF",
+    "asset_class": "japan_equity",
+    "candidate": true
+  },
+  {
+    "symbol": "1591",
+    "name": "JPX Nikkei 400 ETF",
+    "asset_class": "japan_equity",
+    "candidate": true
+  },
+  {
+    "symbol": "1343",
+    "name": "NF J-REIT ETF",
+    "asset_class": "reit",
+    "candidate": true
+  },
+  {
+    "symbol": "1476",
+    "name": "iShares Core J-REIT ETF",
+    "asset_class": "reit",
+    "candidate": true
+  },
+  {
+    "symbol": "2556",
+    "name": "One ETF TSE REIT Index",
+    "asset_class": "reit",
+    "candidate": true
+  },
+  {
+    "symbol": "1540",
+    "name": "Japan Physical Gold ETF",
+    "asset_class": "gold",
+    "candidate": true
+  },
+  {
+    "symbol": "1328",
+    "name": "Gold Price Linked ETF",
+    "asset_class": "gold",
+    "candidate": true
+  },
+  {
+    "symbol": "2510",
+    "name": "NF Japan Bond ETF",
+    "asset_class": "bond",
+    "candidate": true
+  },
+  {
+    "symbol": "2511",
+    "name": "NF Foreign Bond ETF",
+    "asset_class": "bond",
+    "candidate": true
+  },
+  {
+    "symbol": "1482",
+    "name": "iShares Core 7-10 Year US Treasury Bond ETF JPY Hedged",
+    "asset_class": "bond",
+    "candidate": true
+  },
+  {
+    "symbol": "2621",
+    "name": "iShares 20+ Year US Treasury Bond ETF JPY Hedged",
+    "asset_class": "bond",
+    "candidate": true
+  },
+  {
+    "symbol": "1550",
+    "name": "MAXIS Global Equity MSCI Kokusai ETF",
+    "asset_class": "global_equity",
+    "candidate": true
+  },
+  {
+    "symbol": "1655",
+    "name": "iShares S&P 500 ETF",
+    "asset_class": "us_equity",
+    "candidate": true
+  },
+  {
+    "symbol": "2558",
+    "name": "MAXIS S&P 500 ETF",
+    "asset_class": "us_equity",
+    "candidate": true
+  },
+  {
+    "symbol": "2631",
+    "name": "MAXIS NASDAQ-100 ETF",
+    "asset_class": "us_equity",
+    "candidate": true
+  },
+  {
+    "symbol": "2559",
+    "name": "MAXIS All Country World Equity ETF",
+    "asset_class": "global_equity",
+    "candidate": true
+  },
+  {
+    "symbol": "1489",
+    "name": "NF Nikkei 225 High Dividend Yield Stock 50 ETF",
+    "asset_class": "dividend_equity",
+    "candidate": true
+  },
+  {
+    "symbol": "1478",
+    "name": "iShares MSCI Japan High Dividend ETF",
+    "asset_class": "dividend_equity",
+    "candidate": true
+  },
+  {
+    "symbol": "1399",
+    "name": "Listed Index Fund MSCI Japan Equity High Dividend Low Volatility",
+    "asset_class": "dividend_equity",
+    "candidate": true
+  }
+]

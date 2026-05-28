@@ -1,0 +1,79 @@
+[
+  {
+    "symbol": "1570",
+    "name": "NF Nikkei 225 Leveraged ETF",
+    "market": "TSE",
+    "candidate": true,
+    "enabled": true
+  },
+  {
+    "symbol": "8306",
+    "name": "Mitsubishi UFJ Financial Group",
+    "market": "TSE",
+    "candidate": true,
+    "enabled": true
+  },
+  {
+    "symbol": "7203",
+    "name": "Toyota Motor",
+    "market": "TSE",
+    "candidate": true,
+    "enabled": true
+  },
+  {
+    "symbol": "9984",
+    "name": "SoftBank Group",
+    "market": "TSE",
+    "candidate": true,
+    "enabled": true
+  },
+  {
+    "symbol": "6501",
+    "name": "Hitachi",
+    "market": "TSE",
+    "candidate": true,
+    "enabled": false
+  },
+  {
+    "symbol": "8316",
+    "name": "Sumitomo Mitsui Financial Group",
+    "market": "TSE",
+    "candidate": true,
+    "enabled": false
+  },
+  {
+    "symbol": "6758",
+    "name": "Sony Group",
+    "market": "TSE",
+    "candidate": true,
+    "enabled": false
+  },
+  {
+    "symbol": "8058",
+    "name": "Mitsubishi Corporation",
+    "market": "TSE",
+    "candidate": true,
+    "enabled": false
+  },
+  {
+    "symbol": "8035",
+    "name": "Tokyo Electron",
+    "market": "TSE",
+    "candidate": true,
+    "enabled": false
+  },
+  {
+    "symbol": "8411",
+    "name": "Mizuho Financial Group",
+    "market": "TSE",
+    "candidate": true,
+    "enabled": false
+  },
+  {
+    "symbol": "8031",
+    "name": "Mitsui & Co.",
+    "market": "TSE",
+    "candidate": true,
+    "enabled": false
+  }
+]

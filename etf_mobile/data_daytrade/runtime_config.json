@@ -1,0 +1,17 @@
+{
+  "trading_mode": "paper",
+  "market_data_adapter": "rss",
+  "order_adapter": "paper",
+  "allow_live_order": false,
+  "api_usage": "market_data_only",
+  "order_queue_enabled": true,
+  "order_queue_file": "order_queue.jsonl",
+  "order_events_file": "order_events.jsonl",
+  "screener_auto_apply": true,
+  "screener_top_n": 4,
+  "screener_refresh_times": [
+    "09:40",
+    "12:40"
+  ],
+  "screener_refresh_window_minutes": 20
+}

@@ -1,0 +1,56 @@
+# Secrets and local access keys
+.phone_ssh/
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+.env
+.env.*
+
+# Python caches and virtual environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Logs and runtime output
+*.log
+*.log.*
+logs/
+etf_mobile/logs/
+phone_deploy/*.log
+phone_deploy/*.err.log
+
+# Generated archives and deployment bundles
+*.tar
+*.tar.gz
+*.zip
+phone_deploy/etf_mobile_pull.*
+
+# Excel/RSS local workbooks and lock files
+*.xlsx
+~$*
+
+# Runtime databases and queues
+*.sqlite
+*.db
+*.jsonl
+
+# Local trading/runtime data
+etf_mobile/data/*
+!etf_mobile/data/symbols.json
+!etf_mobile/data/candidate_universe.json
+
+etf_mobile/data_daytrade/*
+!etf_mobile/data_daytrade/symbols.json
+!etf_mobile/data_daytrade/runtime_config.json
+
+# Local handoff/resume notes with machine-specific details
+CODEX_HANDOFF_*.md
+*_RESUME.md
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
