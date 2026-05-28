@@ -161,6 +161,16 @@ class DaytradeAppTest(unittest.TestCase):
         self.assertIn("一部利確 103", text)
         self.assertIn("利確 106", text)
 
+    def test_badge_text_matches_short_side(self):
+        self.assertEqual(app.badge_text("ENTRY", "SELL_BREAKDOWN"), "売り")
+        self.assertEqual(app.badge_text("EXIT", "BUY_TARGET"), "買戻し")
+        self.assertEqual(app.badge_text("ENTRY", "BUY_BREAKOUT"), "買い")
+
+    def test_route_path_ignores_refresh_query(self):
+        self.assertEqual(app.route_path("/?_=123"), "/")
+        self.assertEqual(app.route_path("/index.html?_=123"), "/index.html")
+        self.assertEqual(app.route_path("/status.json?_=123"), "/status.json")
+
     def test_build_page_has_summary_and_no_weekend_chart(self):
         app.DATA_DIR.mkdir(parents=True, exist_ok=True)
         app.SYMBOLS_FILE.write_text('[{"symbol":"TEST","name":"Demo","enabled":true}]', encoding="utf-8")
@@ -196,6 +206,14 @@ class DaytradeAppTest(unittest.TestCase):
         self.assertIn("実売買", html)
         self.assertIn("feed", html)
         self.assertIn("次の条件", html)
+        self.assertIn("累計損益", html)
+        self.assertIn("本日損益", html)
+        self.assertIn('data-detail-key="TEST"', html)
+        self.assertIn('id="daytrade-content"', html)
+        self.assertIn("daytrade.openDetails", html)
+        self.assertIn("window.scrollTo(0, savedY)", html)
+        self.assertIn("fetch(`${window.location.pathname}", html)
+        self.assertNotIn("location.reload()", html)
         if dt.datetime.now().weekday() >= 5:
             self.assertNotIn("価格チャート", html)
 

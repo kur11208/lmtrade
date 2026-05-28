@@ -66,7 +66,7 @@ def build_order_candidate(state: dict) -> dict | None:
     if not symbol or not latest_ts:
         return None
 
-    if side == "BUY":
+    if signal == "ENTRY":
         weight = runner.parse_float(state.get("current_w_today"), 0.0)
         price_ref = state.get("entry_price") or state.get("last_price")
         order_type = "ENTRY"

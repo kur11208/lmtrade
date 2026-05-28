@@ -6,6 +6,7 @@ import html
 import json
 import os
 import subprocess
+from urllib.parse import urlsplit
 
 import daytrade_market_calendar as market_calendar
 import daytrade_status
@@ -372,7 +373,7 @@ def current_freshness_state(st: dict, settings: dict, now: datetime) -> dict:
 
     display["data_age_sec"] = age_sec
     display["data_freshness_status"] = freshness
-    if freshness == "market_closed" and str(display.get("current_position_today", "FLAT")).strip() != "LONG":
+    if freshness == "market_closed" and str(display.get("current_position_today", "FLAT")).strip() not in ("LONG", "SHORT"):
         display["signal"] = "WAIT"
         display["last_action"] = "MARKET_CLOSED"
         display["strategy_reason"] = "market closed"
@@ -391,6 +392,7 @@ def metric_html(label, value, tone=""):
 def jp_position(value):
     mapping = {
         "LONG": "保有中",
+        "SHORT": "売り建て中",
         "FLAT": "ノーポジ",
         "CASH": "ノーポジ",
     }
@@ -398,7 +400,15 @@ def jp_position(value):
     return mapping.get(text, text or "-")
 
 
-def badge_text(signal):
+def badge_text(signal, action=None):
+    action_text = str(action or "").strip()
+    if signal == "ENTRY":
+        if action_text.startswith("SELL_"):
+            return "売り"
+        if action_text.startswith("BUY_"):
+            return "買い"
+    if signal == "EXIT" and action_text.startswith("BUY_"):
+        return "買戻し"
     mapping = {
         "ENTRY": "買い",
         "EXIT": "手仕舞い",
@@ -414,13 +424,22 @@ def jp_action(value):
     mapping = {
         "BUY_BREAKOUT": "ブレイク買い",
         "BUY_VWAP_RECLAIM": "VWAP回復買い",
+        "SELL_BREAKDOWN": "ブレイク売り",
+        "SELL_VWAP_REJECT": "VWAP反落売り",
         "SELL_TARGET": "利確",
         "SELL_PARTIAL_TARGET": "一部利確",
         "SELL_STOP": "損切り",
         "SELL_EOD": "大引け前手仕舞い",
         "SELL_STALE_EOD": "データ停止後の手仕舞い",
         "SELL_DISABLED": "停止で手仕舞い",
+        "BUY_TARGET": "買い戻し利確",
+        "BUY_PARTIAL_TARGET": "一部買い戻し",
+        "BUY_STOP": "買い戻し損切り",
+        "BUY_EOD": "大引け前買い戻し",
+        "BUY_STALE_EOD": "データ停止後の買い戻し",
+        "BUY_DISABLED": "停止で買い戻し",
         "HOLD_LONG": "保有継続",
+        "HOLD_SHORT": "売り建て継続",
         "WAIT": "待機",
         "NO_NEW_ENTRY": "新規停止",
         "DAILY_LOSS_STOP": "日次損失停止",
@@ -437,8 +456,11 @@ def jp_reason(value):
         "state file missing": "状態ファイル未作成",
         "opening range is still forming": "寄り付きレンジ形成中",
         "opening range breakout above vwap": "寄り付きレンジ上抜け、VWAP上",
+        "opening range breakdown below vwap": "寄り付きレンジ下抜け、VWAP下",
         "vwap reclaim": "VWAP回復",
+        "vwap rejection": "VWAP反落",
         "breakout or vwap condition not met": "ブレイクまたはVWAP条件が未達",
+        "breakout/breakdown or vwap condition not met": "上抜け・下抜けまたはVWAP条件が未達",
         "position open": "ポジション保有中",
         "exit by target": "利確条件到達",
         "exit by stop": "損切り条件到達",
@@ -564,6 +586,16 @@ def condition_text(st: dict, settings: dict, now: datetime):
             parts.append(f"利確 {format_price(st.get('target_price'))}")
         parts.append(f"手仕舞い {settings.get('force_flat_time') or st.get('force_flat_time', '15:25')}")
         return " / ".join(parts)
+    if position == "SHORT":
+        parts = []
+        if st.get("stop_price") is not None:
+            parts.append(f"損切り買戻し {format_price(st.get('stop_price'))}")
+        if st.get("partial_target_price") is not None and not st.get("partial_exited"):
+            parts.append(f"一部買戻し {format_price(st.get('partial_target_price'))}")
+        if st.get("target_price") is not None:
+            parts.append(f"買戻し利確 {format_price(st.get('target_price'))}")
+        parts.append(f"買戻し {settings.get('force_flat_time') or st.get('force_flat_time', '15:25')}")
+        return " / ".join(parts)
 
     freshness = str(st.get("data_freshness_status", "")).strip()
     if freshness == "market_closed":
@@ -589,10 +621,11 @@ def condition_text(st: dict, settings: dict, now: datetime):
         return f"クールダウン中: {until}まで"
 
     or_high = format_price(st.get("opening_range_high"))
+    or_low = format_price(st.get("opening_range_low"))
     vwap = format_price(st.get("vwap"))
     vol = format_number(st.get("volume_ratio"), 2)
     needed = format_number(settings.get("min_volume_ratio", 1.2), 2)
-    return f"OR高値 {or_high} 上抜け / VWAP {vwap} 回復 / 出来高 {vol}/{needed}"
+    return f"OR高値 {or_high} 上抜け / OR安値 {or_low} 下抜け / VWAP {vwap} / 出来高 {vol}/{needed}"
 
 
 def should_show_chart(st: dict, rows: list[dict], now: datetime):
@@ -768,7 +801,7 @@ def build_status_summary(items, runtime_config, now: datetime):
     for item in items:
         symbol = str(item.get("symbol", ""))
         states.append(current_freshness_state(load_state(symbol), load_settings(symbol), now))
-    long_count = sum(1 for st in states if st.get("current_position_today") == "LONG")
+    open_count = sum(1 for st in states if st.get("current_position_today") in ("LONG", "SHORT"))
     stopped_count = sum(1 for st in states if str(st.get("data_freshness_status", "")) in ("blocked_stale", "missing", "future"))
     stale_count = sum(1 for st in states if str(st.get("data_freshness_status", "")) == "stale")
     market_label = market_calendar.market_label(now)
@@ -784,7 +817,7 @@ def build_status_summary(items, runtime_config, now: datetime):
     <div class="status-bar">
         {metric_html("市場", market_label)}
         {metric_html("監視", f"{len(items)}銘柄", "ok")}
-        {metric_html("建玉", f"{long_count}件", "warn" if long_count else "")}
+        {metric_html("建玉", f"{open_count}件", "warn" if open_count else "")}
         {metric_html("データ", data_label, tone)}
         {metric_html("feed", feed_label, feed_tone)}
         {metric_html("実売買", live_order, "safe")}
@@ -878,11 +911,11 @@ def render_card(item: dict, screener: dict, backtests: dict, runtime_config: dic
                 <div class="symbol">{html.escape(symbol)}</div>
                 <div class="name">{html.escape(name)}</div>
             </div>
-            <div class="{badge_class}">{html.escape(badge_text(signal))}</div>
+            <div class="{badge_class}">{html.escape(badge_text(signal, st.get("last_action")))}</div>
         </div>
         <div class="rows">{''.join(primary_rows)}</div>
         {chart_block(st, hist, now)}
-        <details class="details">
+        <details class="details" data-detail-key="{html.escape(symbol, quote=True)}">
             <summary>詳細</summary>
             {''.join(detail_rows)}
             <div class="note">スクリーナー: {html.escape(reason_text)}</div>
@@ -901,6 +934,93 @@ def render_ranking(screener: dict):
             f'<div class="chip"><span>{html.escape(str(row.get("symbol", "")))}</span><strong>{html.escape(format_score(row.get("score")))}</strong></div>'
         )
     return f'<div class="rank-strip">{"".join(chips)}</div>'
+
+
+AUTO_REFRESH_SCRIPT = """
+(() => {
+    const detailKey = "daytrade.openDetails";
+    const scrollKey = "daytrade.scrollY";
+    const contentSelector = "#daytrade-content";
+    let refreshInFlight = false;
+
+    function loadOpenDetails() {
+        try {
+            return JSON.parse(sessionStorage.getItem(detailKey) || "{}");
+        } catch (e) {
+            return {};
+        }
+    }
+
+    function saveViewState(root = document) {
+        const openDetails = {};
+        root.querySelectorAll("details[data-detail-key]").forEach((node) => {
+            const key = node.getAttribute("data-detail-key");
+            if (key) {
+                openDetails[key] = node.open;
+            }
+        });
+        sessionStorage.setItem(detailKey, JSON.stringify(openDetails));
+        sessionStorage.setItem(scrollKey, String(window.scrollY || 0));
+    }
+
+    function restoreViewState(root = document) {
+        const openDetails = loadOpenDetails();
+        root.querySelectorAll("details[data-detail-key]").forEach((node) => {
+            const key = node.getAttribute("data-detail-key");
+            if (Object.prototype.hasOwnProperty.call(openDetails, key)) {
+                node.open = Boolean(openDetails[key]);
+            }
+            node.addEventListener("toggle", () => saveViewState());
+        });
+
+        const savedY = Number(sessionStorage.getItem(scrollKey));
+        if (Number.isFinite(savedY) && savedY > 0) {
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => window.scrollTo(0, savedY));
+            });
+        }
+    }
+
+    async function refreshContent() {
+        if (refreshInFlight) {
+            return;
+        }
+        refreshInFlight = true;
+        saveViewState();
+
+        try {
+            const response = await fetch(`${window.location.pathname}?_=${Date.now()}`, {
+                cache: "no-store",
+                credentials: "same-origin"
+            });
+            if (!response.ok) {
+                return;
+            }
+
+            const text = await response.text();
+            const nextDoc = new DOMParser().parseFromString(text, "text/html");
+            const nextContent = nextDoc.querySelector(contentSelector);
+            const currentContent = document.querySelector(contentSelector);
+            if (!nextContent || !currentContent) {
+                return;
+            }
+
+            currentContent.replaceWith(document.importNode(nextContent, true));
+            restoreViewState();
+        } catch (e) {
+            return;
+        } finally {
+            refreshInFlight = false;
+        }
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+        restoreViewState();
+        setInterval(refreshContent, 2000);
+    });
+    window.addEventListener("beforeunload", () => saveViewState());
+})();
+""".strip()
 
 
 def build_page():
@@ -1128,11 +1248,11 @@ def build_page():
             }}
         </style>
         <script>
-            setTimeout(() => location.reload(), 2000);
+            {AUTO_REFRESH_SCRIPT}
         </script>
     </head>
     <body>
-        <div class="page">
+        <div class="page" id="daytrade-content">
             <div class="title-row">
                 <div class="title">デイトレ ペーパートレード</div>
                 <div class="updated">更新 {html.escape(updated)}</div>
@@ -1200,6 +1320,10 @@ def build_pc_wake_payload():
     return payload
 
 
+def route_path(raw_path: str) -> str:
+    return urlsplit(str(raw_path or "")).path
+
+
 class Handler(BaseHTTPRequestHandler):
     def send_response_content(self, status, content_type, body, include_body=True):
         try:
@@ -1213,22 +1337,23 @@ class Handler(BaseHTTPRequestHandler):
             self.log_message("client disconnected before response completed")
 
     def do_GET(self):
-        if self.path in ["/status.json", "/health"]:
+        path = route_path(self.path)
+        if path in ["/status.json", "/health"]:
             payload = build_status_payload()
             body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
             self.send_response_content(200, "application/json; charset=utf-8", body)
             return
-        if self.path == "/device.json":
+        if path == "/device.json":
             payload = build_device_payload()
             body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
             self.send_response_content(200, "application/json; charset=utf-8", body)
             return
-        if self.path == "/pc-wake.json":
+        if path == "/pc-wake.json":
             payload = build_pc_wake_payload()
             body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
             self.send_response_content(200, "application/json; charset=utf-8", body)
             return
-        if self.path not in ["/", "/index.html"]:
+        if path not in ["/", "/index.html"]:
             body = b"not found\n"
             self.send_response_content(404, "text/plain; charset=utf-8", body)
             return
@@ -1236,7 +1361,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response_content(200, "text/html; charset=utf-8", body)
 
     def do_POST(self):
-        if self.path != "/feed/bars":
+        path = route_path(self.path)
+        if path != "/feed/bars":
             body = json.dumps({"ok": False, "error": "not found"}).encode("utf-8")
             self.send_response_content(404, "application/json; charset=utf-8", body)
             return
@@ -1274,7 +1400,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response_content(500, "application/json; charset=utf-8", body)
 
     def do_HEAD(self):
-        if self.path not in ["/", "/index.html"]:
+        path = route_path(self.path)
+        if path not in ["/", "/index.html"]:
             body = b"not found\n"
             self.send_response_content(404, "text/plain; charset=utf-8", body, include_body=False)
             return

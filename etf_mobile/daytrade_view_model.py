@@ -17,7 +17,7 @@ def feed_label_from_freshness(freshness: str) -> tuple[str, str]:
 
 
 def display_reason(last_action: str, reason: str) -> str | None:
-    if str(last_action or "").strip() == "SELL_STALE_EOD":
+    if str(last_action or "").strip() in ("SELL_STALE_EOD", "BUY_STALE_EOD"):
         return "データ停止後にノーポジ化済み"
     return None
 

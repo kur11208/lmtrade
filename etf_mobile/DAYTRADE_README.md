@@ -80,7 +80,8 @@ Current non-API controls:
 - runner heartbeat in `data_daytrade/runner_status.json`
 - data freshness and stale-data display
 - bar gap detection
-- opening range breakout and VWAP reclaim setups
+- long setups: opening range breakout and VWAP reclaim
+- short setups: opening range breakdown and VWAP rejection
 - VWAP filter
 - volume confirmation
 - opening gap filter
@@ -97,8 +98,10 @@ Current non-API controls:
 - forced flat before close
 - data gap warnings
 - local alert CSV for ENTRY/EXIT/BLOCKED
-- order candidate queue for paper/noop processing
+- order candidate queue for paper/noop processing, including short-entry SELL and short-exit BUY candidates
 - runtime config that forces `allow_live_order=false`
+
+Set `allow_short=false` in a symbol's `paper_settings.json` to keep that symbol long-only. Set `allow_long=false` to test only the downside setups.
 
 ## Screener
 

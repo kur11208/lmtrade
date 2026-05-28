@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import daytrade_config
+import daytrade_order_queue as order_queue
 import daytrade_runner as runner
 
 
@@ -29,8 +31,10 @@ class DaytradeRunnerTest(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.old_data_dir = runner.DATA_DIR
         self.old_symbols_file = runner.SYMBOLS_FILE
+        self.old_config_file = daytrade_config.CONFIG_FILE
         runner.DATA_DIR = self.root / "data_daytrade"
         runner.SYMBOLS_FILE = runner.DATA_DIR / "symbols.json"
+        daytrade_config.CONFIG_FILE = runner.DATA_DIR / "runtime_config.json"
         runner.SETTINGS_CACHE.clear()
         runner.BAR_CACHE.clear()
         runner.HISTORY_TS_CACHE.clear()
@@ -39,6 +43,7 @@ class DaytradeRunnerTest(unittest.TestCase):
     def tearDown(self):
         runner.DATA_DIR = self.old_data_dir
         runner.SYMBOLS_FILE = self.old_symbols_file
+        daytrade_config.CONFIG_FILE = self.old_config_file
         runner.SETTINGS_CACHE.clear()
         runner.BAR_CACHE.clear()
         runner.HISTORY_TS_CACHE.clear()
@@ -93,7 +98,78 @@ class DaytradeRunnerTest(unittest.TestCase):
         self.assertEqual(state["current_position_today"], "FLAT")
         self.assertEqual(state["last_action"], "SELL_TARGET")
         self.assertGreater(state["equity"], 1.0)
+        self.assertAlmostEqual(state["sim_pnl_rate"], state["equity"] - 1.0)
+        self.assertAlmostEqual(state["daily_pnl_rate"], state["equity"] - 1.0)
         self.assertEqual(state["trade_count_today"], 1)
+
+    def test_breakdown_enters_short_and_target_exits(self):
+        rows = [
+            {"timestamp": "2026-05-20 09:00:00", "open": 100.0, "high": 100.5, "low": 99.6, "close": 100.1, "volume": 1000},
+            {"timestamp": "2026-05-20 09:05:00", "open": 100.1, "high": 100.2, "low": 99.4, "close": 99.7, "volume": 1200},
+            {"timestamp": "2026-05-20 09:10:00", "open": 99.7, "high": 99.8, "low": 99.0, "close": 99.2, "volume": 1200},
+            {"timestamp": "2026-05-20 09:20:00", "open": 99.2, "high": 99.5, "low": 98.9, "close": 99.1, "volume": 1200},
+            {"timestamp": "2026-05-20 09:30:00", "open": 99.1, "high": 99.2, "low": 98.3, "close": 98.5, "volume": 2200},
+            {"timestamp": "2026-05-20 09:35:00", "open": 98.5, "high": 98.6, "low": 97.0, "close": 97.2, "volume": 2400},
+        ]
+        symbol, _ = self.setup_symbol(rows, settings={"take_profit_r": 1.0, "stop_buffer_rate": 0.01})
+
+        runner.tick_symbol(symbol, replay_all=True, now=dt.datetime(2026, 5, 20, 10, 0))
+
+        state = runner.load_json(runner.DATA_DIR / symbol / "paper_state_daytrade.json", {})
+        self.assertEqual(state["current_position_today"], "FLAT")
+        self.assertEqual(state["last_action"], "BUY_TARGET")
+        self.assertGreater(state["equity"], 1.0)
+        self.assertAlmostEqual(state["sim_pnl_rate"], state["equity"] - 1.0)
+        self.assertAlmostEqual(state["daily_pnl_rate"], state["equity"] - 1.0)
+        self.assertEqual(state["trade_count_today"], 1)
+
+    def test_short_entry_builds_sell_order_candidate(self):
+        write_json(runner.DATA_DIR / "runtime_config.json", {
+            "order_queue_enabled": True,
+            "order_queue_file": "order_queue.jsonl",
+            "order_events_file": "order_events.jsonl",
+        })
+        state = {
+            "symbol": "TEST",
+            "latest_ts": "2026-05-20 09:30:00",
+            "signal": "ENTRY",
+            "last_action": "SELL_BREAKDOWN",
+            "current_position_today": "SHORT",
+            "current_w_today": 0.25,
+            "entry_price": 98.5,
+            "last_price": 98.5,
+        }
+
+        candidate = order_queue.build_order_candidate(state)
+
+        self.assertIsNotNone(candidate)
+        self.assertEqual(candidate["side"], "SELL")
+        self.assertEqual(candidate["order_type"], "ENTRY")
+        self.assertEqual(candidate["weight"], 0.25)
+
+    def test_short_exit_builds_buy_order_candidate(self):
+        write_json(runner.DATA_DIR / "runtime_config.json", {
+            "order_queue_enabled": True,
+            "order_queue_file": "order_queue.jsonl",
+            "order_events_file": "order_events.jsonl",
+        })
+        state = {
+            "symbol": "TEST",
+            "latest_ts": "2026-05-20 09:35:00",
+            "signal": "EXIT",
+            "last_action": "BUY_TARGET",
+            "current_position_today": "FLAT",
+            "last_exit_w": 0.25,
+            "exit_price": 97.5,
+            "last_price": 97.5,
+        }
+
+        candidate = order_queue.build_order_candidate(state)
+
+        self.assertIsNotNone(candidate)
+        self.assertEqual(candidate["side"], "BUY")
+        self.assertEqual(candidate["order_type"], "EXIT")
+        self.assertEqual(candidate["weight"], 0.25)
 
     def test_force_flat_before_close(self):
         rows = [

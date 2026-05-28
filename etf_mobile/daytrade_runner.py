@@ -24,6 +24,8 @@ SYMBOLS_FILE = DATA_DIR / "symbols.json"
 SETTINGS_KEYS = (
     "strategy_enabled",
     "strategy_mode",
+    "allow_long",
+    "allow_short",
     "opening_range_minutes",
     "breakout_buffer_rate",
     "vwap_slop_rate",
@@ -71,6 +73,8 @@ SETTINGS_KEYS = (
 DEFAULT_SETTINGS = {
     "strategy_enabled": True,
     "strategy_mode": "both",
+    "allow_long": True,
+    "allow_short": True,
     "opening_range_minutes": 30,
     "breakout_buffer_rate": 0.0005,
     "vwap_slop_rate": 0.0010,
@@ -436,7 +440,7 @@ def update_freshness_fields(state: dict, now: dt.datetime, settings: dict) -> di
     state["data_stale_blocked"] = blocked
     state["stale_data_warn_seconds"] = warn_sec
     state["stale_data_block_seconds"] = block_sec
-    if blocked and state.get("current_position_today") != "LONG":
+    if blocked and state.get("current_position_today") not in ("LONG", "SHORT"):
         state["signal"] = "BLOCKED"
         state["strategy_reason"] = "stale data blocked"
     return state
@@ -484,6 +488,20 @@ def effective_exit_price(raw_price: float, settings: dict) -> float:
     spread = clamp(settings.get("spread_rate"), 0.0, 0.05, DEFAULT_SETTINGS["spread_rate"])
     price = raw_price * (1.0 - slippage - spread * 0.5)
     return max(0.01, round_price(price, parse_float(settings.get("tick_size"), DEFAULT_SETTINGS["tick_size"]), "sell"))
+
+
+def effective_short_entry_price(raw_price: float, settings: dict) -> float:
+    slippage = clamp(settings.get("slippage_rate"), 0.0, 0.05, DEFAULT_SETTINGS["slippage_rate"])
+    spread = clamp(settings.get("spread_rate"), 0.0, 0.05, DEFAULT_SETTINGS["spread_rate"])
+    price = raw_price * (1.0 - slippage - spread * 0.5)
+    return max(0.01, round_price(price, parse_float(settings.get("tick_size"), DEFAULT_SETTINGS["tick_size"]), "sell"))
+
+
+def effective_cover_price(raw_price: float, settings: dict) -> float:
+    slippage = clamp(settings.get("slippage_rate"), 0.0, 0.05, DEFAULT_SETTINGS["slippage_rate"])
+    spread = clamp(settings.get("spread_rate"), 0.0, 0.05, DEFAULT_SETTINGS["spread_rate"])
+    price = raw_price * (1.0 + slippage + spread * 0.5)
+    return round_price(price, parse_float(settings.get("tick_size"), DEFAULT_SETTINGS["tick_size"]), "buy")
 
 
 def trade_fee_rate(settings: dict) -> float:
@@ -577,6 +595,7 @@ def reset_for_new_day(state: dict, symbol: str, bar: dict, settings: dict) -> di
         "partial_target_price": None,
         "partial_exited": False,
         "highest_price_since_entry": None,
+        "lowest_price_since_entry": None,
         "initial_risk_price": None,
         "disabled_after_loss": False,
         "cooldown_until_ts": "",
@@ -609,6 +628,7 @@ def record_trade(state: dict, exit_ts: str, exit_price: float, trade_return: flo
     trades.append({
         "entry_ts": entry_ts,
         "exit_ts": exit_ts,
+        "direction": state.get("current_position_today", ""),
         "exit_reason": reason,
         "exit_price": exit_price,
         "trade_return": trade_return,
@@ -663,6 +683,53 @@ def enter_long(
     return state
 
 
+def enter_short(
+    state: dict,
+    bar: dict,
+    settings: dict,
+    raw_stop_price: float,
+    position_w: float,
+    setup_name: str,
+):
+    fee_rate = trade_fee_rate(settings)
+    entry_price = effective_short_entry_price(bar["close"], settings)
+    stop_price = max(entry_price * 1.001, raw_stop_price)
+    stop_price = round_price(max(0.01, stop_price), parse_float(settings.get("tick_size"), DEFAULT_SETTINGS["tick_size"]), "buy")
+    initial_risk = max(stop_price - entry_price, entry_price * 0.001)
+
+    take_profit_r = max(0.10, parse_float(settings.get("take_profit_r"), DEFAULT_SETTINGS["take_profit_r"]))
+    partial_take_profit_r = max(0.10, parse_float(settings.get("partial_take_profit_r"), DEFAULT_SETTINGS["partial_take_profit_r"]))
+    target_price = round_price(max(0.01, entry_price - initial_risk * take_profit_r), parse_float(settings.get("tick_size"), 1.0), "buy")
+    partial_target = round_price(max(0.01, entry_price - initial_risk * partial_take_profit_r), parse_float(settings.get("tick_size"), 1.0), "buy")
+
+    equity = parse_float(state.get("equity"), 1.0)
+    entry_equity = equity * max(0.0, 1.0 - position_w * fee_rate)
+    action = "SELL_BREAKDOWN" if setup_name == "breakdown" else "SELL_VWAP_REJECT"
+    reason = "opening range breakdown below vwap" if setup_name == "breakdown" else "vwap rejection"
+    state.update({
+        "current_position_today": "SHORT",
+        "current_w_today": position_w,
+        "entry_price": entry_price,
+        "entry_ts": bar["timestamp"],
+        "entry_equity": entry_equity,
+        "trade_start_equity": equity,
+        "equity": entry_equity,
+        "stop_price": stop_price,
+        "target_price": target_price,
+        "partial_target_price": partial_target,
+        "partial_exited": False,
+        "highest_price_since_entry": None,
+        "lowest_price_since_entry": bar["low"],
+        "initial_risk_price": initial_risk,
+        "trade_count_today": parse_int(state.get("trade_count_today"), 0) + 1,
+        "last_action": action,
+        "signal": "ENTRY",
+        "setup": setup_name,
+        "strategy_reason": reason,
+    })
+    return state
+
+
 def partial_exit_long(state: dict, raw_exit_price: float, settings: dict, bar: dict):
     current_w = clamp(state.get("current_w_today"), 0.0, 1.0, 0.0)
     exit_rate = clamp(settings.get("partial_exit_rate"), 0.0, 1.0, DEFAULT_SETTINGS["partial_exit_rate"])
@@ -683,6 +750,32 @@ def partial_exit_long(state: dict, raw_exit_price: float, settings: dict, bar: d
         "partial_exited": True,
         "partial_exit_price": exit_price,
         "last_action": "SELL_PARTIAL_TARGET",
+        "signal": "HOLD",
+        "strategy_reason": "partial target reached",
+    })
+    return state
+
+
+def partial_exit_short(state: dict, raw_exit_price: float, settings: dict, bar: dict):
+    current_w = clamp(state.get("current_w_today"), 0.0, 1.0, 0.0)
+    exit_rate = clamp(settings.get("partial_exit_rate"), 0.0, 1.0, DEFAULT_SETTINGS["partial_exit_rate"])
+    exit_w = min(current_w, current_w * exit_rate)
+    if exit_w <= 0:
+        return state
+
+    entry_price = parse_float(state.get("entry_price"), 0.0)
+    entry_equity = parse_float(state.get("entry_equity"), parse_float(state.get("equity"), 1.0))
+    exit_price = effective_cover_price(raw_exit_price, settings)
+    trade_return = 1.0 - exit_price / entry_price if entry_price > 0 else 0.0
+    equity = entry_equity * max(0.0, 1.0 + exit_w * trade_return - exit_w * trade_fee_rate(settings))
+    remaining_w = max(0.0, current_w - exit_w)
+    state.update({
+        "equity": equity,
+        "entry_equity": equity,
+        "current_w_today": remaining_w,
+        "partial_exited": True,
+        "partial_exit_price": exit_price,
+        "last_action": "BUY_PARTIAL_TARGET",
         "signal": "HOLD",
         "strategy_reason": "partial target reached",
     })
@@ -728,9 +821,64 @@ def exit_long(state: dict, raw_exit_price: float, reason: str, settings: dict, b
         "partial_target_price": None,
         "partial_exited": False,
         "highest_price_since_entry": None,
+        "lowest_price_since_entry": None,
         "initial_risk_price": None,
         "cooldown_until_ts": ts_text(cooldown_until) if cooldown_until else "",
         "last_action": f"SELL_{reason}",
+        "signal": "EXIT",
+        "strategy_reason": f"exit by {reason.lower()}",
+    })
+
+    max_losses = max(0, parse_int(settings.get("max_consecutive_losses"), DEFAULT_SETTINGS["max_consecutive_losses"]))
+    if max_losses and parse_int(state.get("consecutive_losses_today"), 0) >= max_losses:
+        state["disabled_after_loss"] = True
+        state["strategy_reason"] = "consecutive loss limit reached"
+    return state
+
+
+def exit_short(state: dict, raw_exit_price: float, reason: str, settings: dict, bar: dict):
+    entry_price = parse_float(state.get("entry_price"), 0.0)
+    entry_equity = parse_float(state.get("entry_equity"), parse_float(state.get("equity"), 1.0))
+    trade_start = parse_float(state.get("trade_start_equity"), entry_equity)
+    position_w = clamp(state.get("current_w_today"), 0.0, 1.0, 0.0)
+    exit_price = effective_cover_price(raw_exit_price, settings)
+
+    trade_return = 1.0 - exit_price / entry_price if entry_price > 0 else 0.0
+    equity = entry_equity * max(0.0, 1.0 + position_w * trade_return - position_w * trade_fee_rate(settings))
+    pnl_rate = equity / trade_start - 1.0 if trade_start > 0 else 0.0
+    record_trade(
+        state=state,
+        exit_ts=bar["timestamp"],
+        exit_price=exit_price,
+        trade_return=trade_return,
+        pnl_rate=pnl_rate,
+        reason=reason,
+        entry_ts=str(state.get("entry_ts", "")),
+    )
+
+    cooldown_minutes = max(0, parse_int(settings.get("cooldown_minutes"), DEFAULT_SETTINGS["cooldown_minutes"]))
+    cooldown_until = bar["ts"] + dt.timedelta(minutes=cooldown_minutes) if cooldown_minutes else None
+    state.update({
+        "equity": equity,
+        "current_position_today": "FLAT",
+        "current_w_today": 0.0,
+        "exit_price": exit_price,
+        "last_exit_w": position_w,
+        "last_trade_return": trade_return,
+        "last_trade_pnl_rate": pnl_rate,
+        "realized_pnl_today": parse_float(state.get("realized_pnl_today"), 0.0) + pnl_rate,
+        "entry_price": None,
+        "entry_equity": equity,
+        "trade_start_equity": equity,
+        "stop_price": None,
+        "target_price": None,
+        "partial_target_price": None,
+        "partial_exited": False,
+        "highest_price_since_entry": None,
+        "lowest_price_since_entry": None,
+        "initial_risk_price": None,
+        "cooldown_until_ts": ts_text(cooldown_until) if cooldown_until else "",
+        "last_action": f"BUY_{reason}",
         "signal": "EXIT",
         "strategy_reason": f"exit by {reason.lower()}",
     })
@@ -754,8 +902,21 @@ def mark_long(state: dict, close: float) -> dict:
     return state
 
 
+def mark_short(state: dict, close: float) -> dict:
+    if state.get("current_position_today") != "SHORT":
+        return state
+    entry_price = parse_float(state.get("entry_price"), 0.0)
+    if entry_price <= 0:
+        return state
+    entry_equity = parse_float(state.get("entry_equity"), parse_float(state.get("equity"), 1.0))
+    position_w = clamp(state.get("current_w_today"), 0.0, 1.0, 0.0)
+    state["equity"] = entry_equity * max(0.0, 1.0 + position_w * (1.0 - close / entry_price))
+    return state
+
+
 def update_trailing_stop(state: dict, bar: dict, settings: dict):
-    if state.get("current_position_today") != "LONG":
+    position = state.get("current_position_today")
+    if position not in ("LONG", "SHORT"):
         return state
     trailing_r = parse_float(settings.get("trailing_stop_r"), DEFAULT_SETTINGS["trailing_stop_r"])
     if trailing_r <= 0:
@@ -765,13 +926,22 @@ def update_trailing_stop(state: dict, bar: dict, settings: dict):
     if initial_risk <= 0 or entry_price <= 0:
         return state
 
-    highest = max(parse_float(state.get("highest_price_since_entry"), entry_price), bar["high"])
-    old_stop = parse_float(state.get("stop_price"), 0.0)
-    new_stop = highest - initial_risk * trailing_r
-    new_stop = min(bar["close"] * 0.999, new_stop)
-    if new_stop > old_stop:
-        state["stop_price"] = round_price(new_stop, parse_float(settings.get("tick_size"), 1.0), "sell")
-    state["highest_price_since_entry"] = highest
+    if position == "LONG":
+        highest = max(parse_float(state.get("highest_price_since_entry"), entry_price), bar["high"])
+        old_stop = parse_float(state.get("stop_price"), 0.0)
+        new_stop = highest - initial_risk * trailing_r
+        new_stop = min(bar["close"] * 0.999, new_stop)
+        if new_stop > old_stop:
+            state["stop_price"] = round_price(new_stop, parse_float(settings.get("tick_size"), 1.0), "sell")
+        state["highest_price_since_entry"] = highest
+    else:
+        lowest = min(parse_float(state.get("lowest_price_since_entry"), entry_price), bar["low"])
+        old_stop = parse_float(state.get("stop_price"), float("inf"))
+        new_stop = lowest + initial_risk * trailing_r
+        new_stop = max(bar["close"] * 1.001, new_stop)
+        if new_stop < old_stop:
+            state["stop_price"] = round_price(max(0.01, new_stop), parse_float(settings.get("tick_size"), 1.0), "buy")
+        state["lowest_price_since_entry"] = lowest
     return state
 
 
@@ -832,6 +1002,8 @@ def entry_block_reason(state: dict, bar: dict, settings: dict, opening_range_don
 
 def choose_entry_setup(state: dict, bar: dict, rows_today: list[dict], settings: dict):
     mode = str(settings.get("strategy_mode", DEFAULT_SETTINGS["strategy_mode"])).strip().lower()
+    allow_long = parse_bool(settings.get("allow_long"), DEFAULT_SETTINGS["allow_long"])
+    allow_short = parse_bool(settings.get("allow_short"), DEFAULT_SETTINGS["allow_short"])
     vwap = state.get("vwap")
     or_high = state.get("opening_range_high")
     or_low = state.get("opening_range_low")
@@ -841,15 +1013,17 @@ def choose_entry_setup(state: dict, bar: dict, rows_today: list[dict], settings:
     breakout_buffer = clamp(settings.get("breakout_buffer_rate"), 0.0, 0.05, DEFAULT_SETTINGS["breakout_buffer_rate"])
     vwap_slop = clamp(settings.get("vwap_slop_rate"), 0.0, 0.05, DEFAULT_SETTINGS["vwap_slop_rate"])
     trigger_price = or_high * (1.0 + breakout_buffer)
+    breakdown_price = or_low * (1.0 - breakout_buffer)
     vwap_floor = vwap * (1.0 - vwap_slop)
+    vwap_ceiling = vwap * (1.0 + vwap_slop)
 
     allow_breakout = mode in ("breakout", "both", "breakout_or_reclaim")
     allow_reclaim = mode in ("vwap_reclaim", "both", "breakout_or_reclaim")
 
-    if allow_breakout and bar["close"] > trigger_price and bar["close"] >= vwap_floor:
+    if allow_long and allow_breakout and bar["close"] > trigger_price and bar["close"] >= vwap_floor:
         return "breakout", "opening range breakout above vwap"
 
-    if allow_reclaim and len(rows_today) >= 2:
+    if allow_long and allow_reclaim and len(rows_today) >= 2:
         prev_rows = rows_today[:-1]
         prev = prev_rows[-1]
         prev_vwap = calc_vwap(prev_rows)
@@ -861,13 +1035,37 @@ def choose_entry_setup(state: dict, bar: dict, rows_today: list[dict], settings:
             if touched_vwap and reclaimed and upward and above_mid_range:
                 return "vwap_reclaim", "vwap reclaim"
 
-    return None, "breakout or vwap condition not met"
+    if allow_short and allow_breakout and bar["close"] < breakdown_price and bar["close"] <= vwap_ceiling:
+        return "breakdown", "opening range breakdown below vwap"
+
+    if allow_short and allow_reclaim and len(rows_today) >= 2:
+        prev_rows = rows_today[:-1]
+        prev = prev_rows[-1]
+        prev_vwap = calc_vwap(prev_rows)
+        if prev_vwap is not None:
+            touched_vwap = prev["close"] >= prev_vwap * (1.0 - vwap_slop) or bar["high"] >= vwap * (1.0 - vwap_slop)
+            rejected = bar["close"] < vwap * (1.0 - breakout_buffer)
+            downward = bar["close"] < prev["low"]
+            below_mid_range = bar["close"] < (or_high + or_low) / 2.0
+            if touched_vwap and rejected and downward and below_mid_range:
+                return "vwap_reject", "vwap rejection"
+
+    return None, "breakout/breakdown or vwap condition not met"
 
 
 def calc_stop_price(setup_name: str, bar: dict, state: dict, settings: dict) -> float:
     stop_buffer_rate = clamp(settings.get("stop_buffer_rate"), 0.0001, 0.20, DEFAULT_SETTINGS["stop_buffer_rate"])
     or_low = parse_float(state.get("opening_range_low"), bar["close"] * (1.0 - stop_buffer_rate))
+    or_high = parse_float(state.get("opening_range_high"), bar["close"] * (1.0 + stop_buffer_rate))
     vwap = parse_float(state.get("vwap"), bar["close"])
+    if setup_name in ("breakdown", "vwap_reject"):
+        stop_from_buffer = bar["close"] * (1.0 + stop_buffer_rate)
+        if setup_name == "vwap_reject":
+            raw_stop = min(or_high, vwap * (1.0 + stop_buffer_rate), stop_from_buffer)
+        else:
+            raw_stop = min(or_high, stop_from_buffer)
+        return max(bar["close"] * 1.001, raw_stop)
+
     stop_from_buffer = bar["close"] * (1.0 - stop_buffer_rate)
     if setup_name == "vwap_reclaim":
         raw_stop = max(or_low, vwap * (1.0 - stop_buffer_rate), stop_from_buffer)
@@ -881,7 +1079,7 @@ def calc_position_weight(bar: dict, state: dict, settings: dict, entry_price: fl
     max_position_w = clamp(settings.get("max_position_w"), 0.0, 1.0, DEFAULT_SETTINGS["max_position_w"])
     min_position_w = clamp(settings.get("min_position_w"), 0.0, 1.0, DEFAULT_SETTINGS["min_position_w"])
     liquidity_cap = calc_liquidity_position_cap(bar, state, settings)
-    risk_rate = max(0.0, (entry_price - stop_price) / entry_price) if entry_price > 0 else 0.0
+    risk_rate = abs(entry_price - stop_price) / entry_price if entry_price > 0 else 0.0
     position_w = min(max_position_w, liquidity_cap, risk_per_trade / risk_rate) if risk_rate > 0 else 0.0
 
     sim_capital = parse_float(settings.get("sim_capital_yen"), DEFAULT_SETTINGS["sim_capital_yen"])
@@ -944,6 +1142,8 @@ def process_bar(symbol: str, state: dict, all_bars: list[dict], bar: dict) -> di
     if not strategy_enabled:
         if state.get("current_position_today") == "LONG":
             state = exit_long(state, bar["close"], "DISABLED", settings, bar)
+        elif state.get("current_position_today") == "SHORT":
+            state = exit_short(state, bar["close"], "DISABLED", settings, bar)
         else:
             state["last_action"] = "DISABLED"
             state["signal"] = "WAIT"
@@ -977,6 +1177,32 @@ def process_bar(symbol: str, state: dict, all_bars: list[dict], bar: dict) -> di
             state["last_action"] = "HOLD_LONG"
             state["signal"] = "HOLD"
             state["strategy_reason"] = "position open"
+    elif position == "SHORT":
+        stop_price = parse_float(state.get("stop_price"), None)
+        target_price = parse_float(state.get("target_price"), None)
+        partial_target = parse_float(state.get("partial_target_price"), None)
+
+        if stop_price is not None and bar["high"] >= stop_price:
+            exit_price = bar["open"] if bar["open"] >= stop_price else stop_price
+            state = exit_short(state, max(0.01, exit_price), "STOP", settings, bar)
+        elif target_price is not None and bar["low"] <= target_price:
+            state = exit_short(state, target_price, "TARGET", settings, bar)
+        elif (
+            partial_target is not None
+            and not parse_bool(state.get("partial_exited"), False)
+            and bar["low"] <= partial_target
+        ):
+            state = partial_exit_short(state, partial_target, settings, bar)
+            state = update_trailing_stop(state, bar, settings)
+            state = mark_short(state, bar["close"])
+        elif bar["ts"].time() >= force_flat_time:
+            state = exit_short(state, bar["close"], "EOD", settings, bar)
+        else:
+            state = update_trailing_stop(state, bar, settings)
+            state = mark_short(state, bar["close"])
+            state["last_action"] = "HOLD_SHORT"
+            state["signal"] = "HOLD"
+            state["strategy_reason"] = "position open"
     else:
         state["current_position_today"] = "FLAT"
         state["current_w_today"] = 0.0
@@ -999,14 +1225,21 @@ def process_bar(symbol: str, state: dict, all_bars: list[dict], bar: dict) -> di
                 state["strategy_reason"] = setup_reason
             else:
                 raw_stop = calc_stop_price(setup_name, bar, state, settings)
-                entry_price = effective_entry_price(bar["close"], settings)
-                stop_price = min(entry_price * 0.999, raw_stop)
+                if setup_name in ("breakdown", "vwap_reject"):
+                    entry_price = effective_short_entry_price(bar["close"], settings)
+                    stop_price = max(entry_price * 1.001, raw_stop)
+                else:
+                    entry_price = effective_entry_price(bar["close"], settings)
+                    stop_price = min(entry_price * 0.999, raw_stop)
                 position_w, weight_reason = calc_position_weight(bar, state, settings, entry_price, stop_price)
                 if weight_reason:
                     state["signal"] = "BLOCKED"
                     state["strategy_reason"] = weight_reason
                 else:
-                    state = enter_long(state, bar, settings, stop_price, position_w, setup_name)
+                    if setup_name in ("breakdown", "vwap_reject"):
+                        state = enter_short(state, bar, settings, stop_price, position_w, setup_name)
+                    else:
+                        state = enter_long(state, bar, settings, stop_price, position_w, setup_name)
                     state["strategy_reason"] = setup_reason
 
     day_start = parse_float(state.get("day_start_equity"), parse_float(state.get("equity"), 1.0))
@@ -1041,7 +1274,7 @@ def monitor_open_position_without_new_bar(
     bars: list[dict],
     now: dt.datetime,
 ) -> tuple[dict, bool]:
-    if state.get("current_position_today") != "LONG":
+    if state.get("current_position_today") not in ("LONG", "SHORT"):
         return state, False
 
     latest = latest_bar_at_or_before(bars, now)
@@ -1051,12 +1284,13 @@ def monitor_open_position_without_new_bar(
     settings = load_symbol_settings(symbol)
     state = process_bar(symbol, state, bars, latest)
 
-    if state.get("current_position_today") == "LONG":
+    if state.get("current_position_today") in ("LONG", "SHORT"):
         force_flat_time = parse_time(settings.get("force_flat_time"), DEFAULT_SETTINGS["force_flat_time"])
+        exit_fn = exit_short if state.get("current_position_today") == "SHORT" else exit_long
         if latest["ts"].date() < now.date():
-            state = exit_long(state, latest["close"], "STALE_EOD", settings, latest)
+            state = exit_fn(state, latest["close"], "STALE_EOD", settings, latest)
         elif latest["ts"].date() == now.date() and now.time() >= force_flat_time:
-            state = exit_long(state, latest["close"], "EOD", settings, latest)
+            state = exit_fn(state, latest["close"], "EOD", settings, latest)
 
     state = apply_settings_snapshot(state, settings)
     state = update_sim_fields(state)

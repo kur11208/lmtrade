@@ -170,7 +170,7 @@ def load_state(symbol: str) -> dict:
 
 def has_open_position(symbol: str) -> bool:
     state = load_state(symbol)
-    return str(state.get("current_position_today", "")).strip().upper() == "LONG"
+    return str(state.get("current_position_today", "")).strip().upper() in ("LONG", "SHORT")
 
 
 def is_daily_stopped(symbol: str, now: dt.datetime) -> bool:
