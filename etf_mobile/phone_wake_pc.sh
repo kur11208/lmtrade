@@ -14,14 +14,16 @@ LOG_FILE="$LOG_DIR/phone_wake_pc.log"
 WAKE_JSON="$HOME/etf_mobile/data_daytrade/pc_wake_state.json"
 
 mkdir -p "$LOG_DIR" "$(dirname "$WAKE_JSON")"
+
+log() {
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
+}
+
 if [ -z "$TARGET_MAC" ]; then
   log "LMTRADE_PC_MAC is not set; wake skipped"
   echo "LMTRADE_PC_MAC is not set. Set it before running phone_wake_pc.sh."
   exit 1
 fi
-log() {
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
-}
 
 is_trading_day() {
   cd "$HOME/etf_mobile" 2>/dev/null || return 1
