@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LMTrade | Paper Replay</title>
+  <link rel="stylesheet" href="/demo.css">
+  <script src="/demo.js" defer></script>
+</head>
+<body>
+  <header class="header">
+    <div class="brand"><h1>LMTrade</h1><span>ペーパートレード</span></div>
+    <div class="status"><span class="status-dot"></span>オフライン<span class="paper">実注文 OFF</span></div>
+  </header>
+  <main>
+    <div id="error" role="alert" hidden></div>
+    <div id="loading" role="status">計算結果を読み込み中...</div>
+    <div id="workspace" hidden>
+      <div class="scenario-bar">
+        <nav id="scenarios" role="tablist" aria-label="模擬相場"></nav>
+        <span class="fixture-label">模擬データ / 2026.05.20 JST</span>
+      </div>
+      <section class="metrics" aria-label="口座サマリー">
+        <div><span>初期資金</span><strong id="capital"></strong></div>
+        <div><span>評価資産</span><strong id="balance"></strong></div>
+        <div><span>損益 <small>手数料込み</small></span><strong id="pnl"></strong></div>
+        <div><span>決済済み取引</span><strong id="count"></strong><small id="wins"></small></div>
+        <div><span>最大ドローダウン</span><strong id="drawdown"></strong></div>
+      </section>
+      <section id="replay-panel" role="tabpanel" aria-labelledby="tab-trend">
+        <div class="toolbar">
+          <div class="instrument"><h2 id="instrument"></h2><span id="clock"></span><span id="phase" class="tag"></span></div>
+          <div class="controls">
+            <button id="restart" class="primary" title="最初から再生"><span aria-hidden="true">&#9654;</span>最初から再生</button>
+            <button id="toggle" title="再生を一時停止" aria-label="再生を一時停止" disabled>&#9208;</button>
+            <button id="step" title="1本進む" aria-label="1本進む">&#9197;</button>
+            <label class="speed">速度<select id="speed" aria-label="再生速度"><option value="320">1x</option><option value="80">4x</option></select></label>
+          </div>
+        </div>
+        <div class="timeline"><input id="cursor" type="range" min="0" max="40" value="40" aria-label="リプレイ時点"><output id="progress"></output></div>
+        <div class="analysis-grid">
+          <section class="charts" aria-label="価格と評価資産の推移">
+            <div class="chart-heading"><h3>価格推移</h3><div class="legend"><span class="close">価格</span><span class="vwap">VWAP</span><span class="entry">新規約定</span><span class="exit">決済</span></div></div>
+            <canvas id="price-chart" height="300" role="img" aria-label="模擬価格と売買約定"></canvas>
+            <div class="chart-heading"><h3>評価資産</h3><span class="unit">JPY</span></div>
+            <canvas id="equity-chart" height="125" role="img" aria-label="仮想口座の評価資産推移"></canvas>
+          </section>
+          <aside class="decision" aria-label="現在の売買判断">
+            <div class="decision-head"><h3>売買判断</h3><span id="signal" class="tag"></span></div>
+            <p id="reason"></p><code id="raw-reason"></code>
+            <dl>
+              <div><dt>保有</dt><dd id="position"></dd></div>
+              <div><dt>投入比率</dt><dd id="weight"></dd></div>
+              <div><dt>終値</dt><dd id="close"></dd></div>
+              <div><dt>VWAP</dt><dd id="vwap"></dd></div>
+              <div><dt>寄り付き高値 / 安値</dt><dd id="opening"></dd></div>
+              <div><dt>新規約定価格</dt><dd id="entry-price"></dd></div>
+              <div><dt>損切り / 利確水準</dt><dd id="limits"></dd></div>
+            </dl>
+            <details><summary>固定の売買条件</summary><dl id="settings"></dl></details>
+          </aside>
+        </div>
+      </section>
+      <section class="history">
+        <div class="section-heading"><h2>取引履歴</h2><a href="/download.json" download title="全ケースの計算結果をJSONでダウンロード">結果を保存 <span aria-hidden="true">&#8595;</span></a></div>
+        <div class="table-scroll"><table><thead><tr><th>方向</th><th>新規 / 決済時刻</th><th>新規価格</th><th>決済価格</th><th>投入比率</th><th>損益</th><th>決済理由</th></tr></thead><tbody id="trades"></tbody></table></div>
+      </section>
+      <section class="history"><div class="section-heading"><h2>判断ログ</h2><span id="log-count"></span></div><div id="events"></div></section>
+      <footer><span>固定CSV / 1分足 / 1銘柄ずつ独立評価</span><span id="fingerprint"></span></footer>
+    </div>
+  </main>
+</body>
+</html>
