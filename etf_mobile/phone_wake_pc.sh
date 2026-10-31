@@ -2,7 +2,7 @@
 
 set -u
 
-TARGET_MAC="${LMTRADE_PC_MAC:-54:BF:64:32:C4:E9}"
+TARGET_MAC="${LMTRADE_PC_MAC:-}"
 BROADCAST="${LMTRADE_PC_BROADCAST:-192.168.0.255}"
 PORT="${LMTRADE_PC_WOL_PORT:-9}"
 WAKE_TIME="${LMTRADE_PC_WAKE_TIME:-08:45}"
@@ -18,6 +18,12 @@ mkdir -p "$LOG_DIR" "$(dirname "$WAKE_JSON")"
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
 }
+
+if [ -z "$TARGET_MAC" ]; then
+  log "LMTRADE_PC_MAC is not set; wake skipped"
+  echo "LMTRADE_PC_MAC is not set. Set it before running phone_wake_pc.sh."
+  exit 1
+fi
 
 is_trading_day() {
   cd "$HOME/etf_mobile" 2>/dev/null || return 1
