@@ -9,7 +9,7 @@ python demo.py --check
 python -m unittest discover -s etf_mobile -p test_interview_demo.py -v
 ```
 
-デモ専用8テストが成功しました。
+デモ専用9テストが成功しました。
 
 - 3ケースを最初から最後まで実行し、利益・損失・見送り、終端が未保有であることを確認。
 - 毎回初期化し、別プロセス・異なる作業ディレクトリーでも同じ出力。作業ディレクトリーへの結果書き込みなし。
@@ -19,6 +19,7 @@ python -m unittest discover -s etf_mobile -p test_interview_demo.py -v
 - 全期間リプレイの先頭と、入力を途中で切ったリプレイが一致。スナップショット間の状態共有なし。
 - 壊れたCSVを拒否。時系列の逆転・重複、外部銘柄フィルターを拒否。
 - localhostでのGET/HEAD、同梱資産、JSON、未知パスの404、POST拒否を確認。
+- 同一ポートの二重待ち受けを拒否。Windowsでは排他的バインドで既存サーバーとの競合を防止。
 
 | ケース | 新規 / 決済 | 取引数 | 最終損益 |
 | --- | --- | --- | --- |

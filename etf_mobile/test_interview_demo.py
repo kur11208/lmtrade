@@ -141,6 +141,11 @@ class InterviewDemoTest(unittest.TestCase):
                 server.shutdown()
                 thread.join(timeout=5)
 
+    def test_occupied_port_cannot_be_shared(self):
+        with demo.create_server(0) as first:
+            with self.assertRaises(OSError):
+                demo.create_server(first.server_address[1])
+
 
 if __name__ == "__main__":
     unittest.main()

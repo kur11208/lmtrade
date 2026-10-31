@@ -10,6 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import math
 from pathlib import Path
+import socket
 import webbrowser
 
 from daytrade_backtest import max_drawdown, replay_bars
@@ -24,6 +25,16 @@ SCENARIOS = (
     ("reversal", "下抜け後の反転", "DEMO-B"),
     ("range", "レンジ", "DEMO-C"),
 )
+
+
+class DemoHTTPServer(ThreadingHTTPServer):
+    allow_reuse_address = False
+
+    def server_bind(self):
+        # Windows otherwise allows two HTTP servers to share one listening port.
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
 
 
 def load_fixture(path: Path) -> list[dict]:
@@ -155,7 +166,7 @@ def create_server(port: int = 8765) -> ThreadingHTTPServer:
         def log_message(self, format, *args):
             pass
 
-    return ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    return DemoHTTPServer(("127.0.0.1", port), Handler)
 
 
 def main() -> int:
