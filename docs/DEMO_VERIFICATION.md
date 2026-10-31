@@ -55,6 +55,26 @@ node scripts/verify_interview_demo.cjs
 価格と資産のCanvasは描画ピクセルを確認し、デスクトップ・モバイルの画像も目視しました。
 スクリーンショットと機械可読レポートは `.demo-artifacts/` に生成し、Gitには含めません。
 
+## クリーンクローンでの最終検証
+
+コミット済みファイルだけを別ディレクトリーへクローンし、実データ・ローカル設定・未コミット実装なしで確認しました。
+
+```powershell
+python -S demo.py --check
+python -S -m unittest discover -s etf_mobile
+node scripts/verify_interview_demo.cjs
+git status --porcelain
+```
+
+`-S` はsite-packagesを読み込まない指定です。追加Pythonライブラリなしでデモとテストを実行しています。
+全94テストが成功（157.122秒）、ブラウザ検証も成功し、クローン先のGit作業ツリーは変更なしでした。
+検証対象コードのコミットは `ec75fd8`。その後の検証記録更新では実行コードを変更していません。
+起動時の指紋と3ケースの損益は元の作業環境と一致しました。
+
+最初のクローン検証では、既存スクリーナーとコアの戻り値の不一致を1件検出しました。
+既にローカルにあった互換実装・テストを保存して解消し、上記はその後の全体再実行結果です。
+来歴は [CHANGE_PROVENANCE.md](CHANGE_PROVENANCE.md) に記録しています。
+
 ## 維持する運用状態
 
 LMTradeの自動起動タスク6件はDisabledであることを確認しています。
