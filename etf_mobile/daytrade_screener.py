@@ -8,6 +8,7 @@ import math
 import os
 import time
 
+import daytrade_config
 import daytrade_market_calendar as market_calendar
 import daytrade_runner as runner
 
@@ -53,21 +54,21 @@ def score_volume_ratio(volume_ratio) -> float:
     return max(0.0, min(20.0, volume_ratio / 2.0 * 20.0))
 
 
-def score_vwap_position(vwap_position) -> float:
+def score_short_vwap_position(vwap_position) -> float:
     if vwap_position is None:
         return 0.0
-    if vwap_position >= 0:
-        return min(15.0, 8.0 + vwap_position * 1000.0)
-    return max(0.0, 8.0 + vwap_position * 800.0)
+    if vwap_position <= 0:
+        return min(15.0, 8.0 + abs(vwap_position) * 1000.0)
+    return max(0.0, 8.0 - vwap_position * 800.0)
 
 
-def score_breakout_position(breakout_distance) -> float:
-    if breakout_distance is None:
+def score_short_breakdown_position(breakdown_distance) -> float:
+    if breakdown_distance is None:
         return 0.0
-    if breakout_distance >= 0:
-        return min(15.0, 10.0 + breakout_distance * 800.0)
-    if breakout_distance > -0.01:
-        return max(0.0, 10.0 + breakout_distance * 900.0)
+    if breakdown_distance <= 0:
+        return min(15.0, 10.0 + abs(breakdown_distance) * 800.0)
+    if breakdown_distance < 0.01:
+        return max(0.0, 10.0 - breakdown_distance * 900.0)
     return 0.0
 
 
@@ -96,14 +97,17 @@ def score_symbol(item: dict) -> dict:
     range_rate = high / low - 1.0 if low > 0 else 0.0
     vwap = runner.calc_vwap(rows_today)
     vwap_position = latest["close"] / vwap - 1.0 if vwap and vwap > 0 else None
-    or_high, or_low, opening_range_done = runner.calc_opening_range(
+    or_high, or_low, opening_range_done, opening_range_recovered = runner.calc_opening_range(
         rows_today,
         max(5, runner.parse_int(settings.get("opening_range_minutes"), runner.DEFAULT_SETTINGS["opening_range_minutes"])),
+        runner.parse_bool(settings.get("allow_recovered_opening_range"), runner.DEFAULT_SETTINGS["allow_recovered_opening_range"]),
+        max(1, runner.parse_int(settings.get("max_recovered_opening_range_start_minutes"), runner.DEFAULT_SETTINGS["max_recovered_opening_range_start_minutes"])),
     )
-    breakout_distance = latest["close"] / or_high - 1.0 if or_high and or_high > 0 else None
+    breakdown_distance = latest["close"] / or_low - 1.0 if or_low and or_low > 0 else None
     volume_ratio = runner.calc_volume_ratio(
         rows_today,
         max(1, runner.parse_int(settings.get("volume_lookback_bars"), runner.DEFAULT_SETTINGS["volume_lookback_bars"])),
+        max(1, runner.parse_int(settings.get("volume_signal_bars"), runner.DEFAULT_SETTINGS["volume_signal_bars"])),
     )
     gap_rate = runner.calc_gap_rate(rows, rows_today)
     data_warning = runner.calc_data_warning(
@@ -111,18 +115,21 @@ def score_symbol(item: dict) -> dict:
         runner.parse_int(settings.get("max_expected_bar_gap_minutes"), runner.DEFAULT_SETTINGS["max_expected_bar_gap_minutes"]),
     )
     spread_rate = runner.parse_float(settings.get("spread_rate"), runner.DEFAULT_SETTINGS["spread_rate"])
+    allow_short = runner.parse_bool(settings.get("allow_short"), runner.DEFAULT_SETTINGS["allow_short"])
 
     score = 0.0
     score += score_liquidity(turnover_yen)
     score += score_range(range_rate)
     score += score_volume_ratio(volume_ratio)
-    score += score_vwap_position(vwap_position)
-    score += score_breakout_position(breakout_distance)
+    if allow_short:
+        score += score_short_vwap_position(vwap_position)
+        score += score_short_breakdown_position(breakdown_distance)
 
     if not opening_range_done:
         score -= 12.0
         result["reasons"].append("opening range incomplete")
-    if gap_rate is not None and abs(gap_rate) > runner.parse_float(settings.get("max_gap_rate"), runner.DEFAULT_SETTINGS["max_gap_rate"]):
+    gap_reason = runner.gap_filter_reason(gap_rate, settings, "short" if allow_short else "long")
+    if gap_reason:
         score -= 12.0
         result["reasons"].append("gap too large")
     if data_warning:
@@ -145,7 +152,8 @@ def score_symbol(item: dict) -> dict:
         "vwap_position": vwap_position,
         "opening_range_high": or_high,
         "opening_range_low": or_low,
-        "breakout_distance": breakout_distance,
+        "opening_range_recovered": opening_range_recovered,
+        "breakdown_distance": breakdown_distance,
         "volume_ratio": volume_ratio,
         "gap_rate": gap_rate,
         "data_warning": data_warning,
@@ -173,20 +181,6 @@ def has_open_position(symbol: str) -> bool:
     return str(state.get("current_position_today", "")).strip().upper() in ("LONG", "SHORT")
 
 
-def is_daily_stopped(symbol: str, now: dt.datetime) -> bool:
-    state = load_state(symbol)
-    if str(state.get("latest_date", "")).strip() != now.strftime("%Y-%m-%d"):
-        return False
-    if runner.parse_bool(state.get("disabled_after_loss"), False):
-        return True
-    reason = str(state.get("strategy_reason", "")).strip()
-    return reason in (
-        "daily loss or consecutive loss limit reached",
-        "daily loss limit reached",
-        "consecutive loss limit reached",
-    )
-
-
 def is_selectable(row: dict) -> bool:
     symbol = str(row.get("symbol", "")).strip()
     if not symbol:
@@ -194,19 +188,20 @@ def is_selectable(row: dict) -> bool:
     reasons = {str(value) for value in row.get("reasons", [])}
     if "no intraday bars" in reasons:
         return False
+    if "gap too large" in reasons:
+        return False
     return runner.parse_float(row.get("score"), 0.0) > 0.0
 
 
 def selected_symbols(results: list[dict], top_n: int, now: dt.datetime) -> set[str]:
     selected = set()
+    limit = int(top_n)
     for row in results:
         symbol = str(row.get("symbol", "")).strip()
         if not is_selectable(row):
             continue
-        if is_daily_stopped(symbol, now) and not has_open_position(symbol):
-            continue
         selected.add(symbol)
-        if len(selected) >= max(1, top_n):
+        if limit > 0 and len(selected) >= limit:
             break
     return selected
 
@@ -219,9 +214,11 @@ def apply_top(results: list[dict], top_n: int, now: dt.datetime | None = None):
     if not selected:
         for item in symbols:
             symbol = str(item.get("symbol", "")).strip()
+            item["enabled"] = symbol in keep_open
             item["screener_score"] = next((row["score"] for row in results if row["symbol"] == symbol), 0.0)
             item["screener_selected"] = False
             item["screener_kept_open_position"] = symbol in keep_open
+            item["screener_selected_at"] = now.strftime("%Y-%m-%d %H:%M:%S") if item["enabled"] else ""
         runner.save_json(runner.SYMBOLS_FILE, symbols)
         return
 
@@ -243,14 +240,13 @@ def run_screen(top_n: int, apply: bool = False, now: dt.datetime | None = None) 
     save_results(results)
 
     if apply:
-        apply_top(results, max(1, top_n), now=now)
+        apply_top(results, int(top_n), now=now)
 
     return results
 
 
 def load_runtime_config() -> dict:
-    cfg = runner.load_json(runner.DATA_DIR / "runtime_config.json", {})
-    return cfg if isinstance(cfg, dict) else {}
+    return daytrade_config.load_runtime_config()
 
 
 def parse_refresh_times(value) -> list[dt.time]:
@@ -322,7 +318,7 @@ def scheduler_tick(now: dt.datetime | None = None) -> list[dict]:
         state = {}
 
     ran = []
-    top_n = max(1, runner.parse_int(cfg.get("screener_top_n"), DEFAULT_TOP_N))
+    top_n = runner.parse_int(cfg.get("screener_top_n"), DEFAULT_TOP_N)
     for slot in due_slots(now, cfg, state):
         results = run_screen(top_n=top_n, apply=False, now=now)
         selected = selected_symbols(results, top_n, now)
@@ -357,8 +353,10 @@ def main():
         scheduler_loop(args.sleep)
         return
 
-    results = run_screen(top_n=max(1, args.top), apply=args.apply)
-    for row in results[:max(1, args.top)]:
+    top_n = int(args.top)
+    results = run_screen(top_n=top_n, apply=args.apply)
+    preview = results if top_n <= 0 else results[:max(1, top_n)]
+    for row in preview:
         print(f"{row['symbol']} score={row['score']:.3f} reasons={','.join(row['reasons'])}")
 
 
