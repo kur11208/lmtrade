@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
+import threading
+import time
 from pathlib import Path
 
 import daytrade_market_calendar as market_calendar
@@ -9,13 +12,22 @@ import daytrade_market_calendar as market_calendar
 DATA_DIR = Path("data_daytrade")
 FEED_STATUS_FILE = DATA_DIR / "feed_status.json"
 RUNNER_STATUS_FILE = DATA_DIR / "runner_status.json"
+AUTO_POWER_STATUS_FILE = DATA_DIR / "auto_power_session.json"
+FEED_RECOVER_STATUS_FILE = DATA_DIR / "market_feed_recover_state.json"
+STATUS_PATH_LOCK = threading.RLock()
 
 
 def set_data_dir(path: Path):
-    global DATA_DIR, FEED_STATUS_FILE, RUNNER_STATUS_FILE
-    DATA_DIR = Path(path)
-    FEED_STATUS_FILE = DATA_DIR / "feed_status.json"
-    RUNNER_STATUS_FILE = DATA_DIR / "runner_status.json"
+    global DATA_DIR, FEED_STATUS_FILE, RUNNER_STATUS_FILE, AUTO_POWER_STATUS_FILE, FEED_RECOVER_STATUS_FILE
+    new_dir = Path(path)
+    with STATUS_PATH_LOCK:
+        if new_dir == DATA_DIR:
+            return
+        DATA_DIR = new_dir
+        FEED_STATUS_FILE = DATA_DIR / "feed_status.json"
+        RUNNER_STATUS_FILE = DATA_DIR / "runner_status.json"
+        AUTO_POWER_STATUS_FILE = DATA_DIR / "auto_power_session.json"
+        FEED_RECOVER_STATUS_FILE = DATA_DIR / "market_feed_recover_state.json"
 
 
 def utc_now_text() -> str:
@@ -37,9 +49,17 @@ def read_json(path: Path, default):
 
 def write_json_atomic(path: Path, data: dict):
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}.{threading.get_ident()}")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    last_error = None
+    for _ in range(10):
+        try:
+            tmp.replace(path)
+            return
+        except OSError as exc:
+            last_error = exc
+            time.sleep(0.2)
+    raise last_error
 
 
 def write_feed_status(
@@ -92,6 +112,14 @@ def read_runner_status() -> dict:
     return read_json(RUNNER_STATUS_FILE, {})
 
 
+def read_auto_power_status() -> dict:
+    return read_json(AUTO_POWER_STATUS_FILE, {})
+
+
+def read_feed_recover_status() -> dict:
+    return read_json(FEED_RECOVER_STATUS_FILE, {})
+
+
 def parse_local_ts(value: str) -> dt.datetime | None:
     text = str(value or "").strip()
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
@@ -136,6 +164,8 @@ def feed_health(feed_status: dict, now: dt.datetime | None = None) -> dict:
         return {"label": "未起動", "tone": "bad", "age_sec": None, "source_status": ""}
     if str(feed_status.get("status", "")).lower() in ("error", "failed"):
         return {"label": "エラー", "tone": "bad", "age_sec": age, "source_status": feed_status.get("status", "")}
+    if str(feed_status.get("status", "")).lower() in ("degraded", "push_error"):
+        return {"label": "低下", "tone": "warn", "age_sec": age, "source_status": feed_status.get("status", "")}
     if age is None or age > 90:
         return {"label": "停止", "tone": "bad", "age_sec": age, "source_status": feed_status.get("status", "")}
     if age > 30:
@@ -147,6 +177,8 @@ def build_http_status(symbol_states: list[dict], runtime_config: dict, now: dt.d
     now = now or dt.datetime.now()
     feed = read_feed_status()
     runner = read_runner_status()
+    pc_power = read_auto_power_status()
+    feed_recover = read_feed_recover_status()
     feed_health_info = feed_health(feed, now)
     return {
         "ok": True,
@@ -170,5 +202,7 @@ def build_http_status(symbol_states: list[dict], runtime_config: dict, now: dt.d
             "age_sec": feed_health_info["age_sec"],
         },
         "runner": runner,
+        "pc_power": pc_power,
+        "feed_recover": feed_recover,
         "symbols": symbol_states,
     }

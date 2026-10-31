@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
+import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime
 
 import daytrade_config
+import daytrade_risk
 import daytrade_runner as runner
 
 
@@ -42,6 +46,75 @@ def load_jsonl(path):
     return rows
 
 
+def load_recent_jsonl(path, max_bytes: int = 1048576):
+    if not path.exists():
+        return []
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as f:
+            if size > max_bytes:
+                f.seek(-max_bytes, 2)
+                f.readline()
+            data = f.read()
+    except Exception:
+        return load_jsonl(path)
+
+    rows = []
+    for line in data.decode("utf-8-sig", errors="replace").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line))
+        except Exception:
+            continue
+    return rows
+
+
+@contextmanager
+def queue_write_lock(path, timeout_seconds: float = 10.0):
+    lock_path = path.with_name(f"{path.name}.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + max(0.1, timeout_seconds)
+
+    with lock_path.open("a+b") as lock_file:
+        lock_file.seek(0, os.SEEK_END)
+        if lock_file.tell() == 0:
+            lock_file.write(b"\0")
+            lock_file.flush()
+
+        acquired = False
+        while not acquired:
+            try:
+                lock_file.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"timed out waiting for order queue lock: {lock_path}")
+                time.sleep(0.05)
+
+        try:
+            yield
+        finally:
+            lock_file.seek(0)
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
 def order_side_from_action(action: str) -> str:
     if action.startswith("BUY_"):
         return "BUY"
@@ -70,6 +143,18 @@ def build_order_candidate(state: dict) -> dict | None:
         weight = runner.parse_float(state.get("current_w_today"), 0.0)
         price_ref = state.get("entry_price") or state.get("last_price")
         order_type = "ENTRY"
+        risk_reason = daytrade_risk.entry_block_reason(proposed_weight=weight)
+        if risk_reason:
+            append_jsonl(events_path(), {
+                "created_at": now_text(),
+                "event": "RISK_BLOCKED",
+                "symbol": symbol,
+                "side": side,
+                "reason": risk_reason,
+                "mode": cfg.get("trading_mode", "paper"),
+                "live_order": False,
+            })
+            return None
     else:
         weight = runner.parse_float(state.get("last_exit_w"), runner.parse_float(state.get("current_w_today"), 0.0))
         price_ref = state.get("exit_price") or state.get("last_price")
@@ -97,26 +182,27 @@ def build_order_candidate(state: dict) -> dict | None:
 
 
 def enqueue_from_state(state: dict):
-    candidate = build_order_candidate(state)
-    if candidate is None:
-        return None
-
     path = queue_path()
-    existing_ids = {str(row.get("id", "")) for row in load_jsonl(path)}
-    if candidate["id"] in existing_ids:
-        return None
+    with queue_write_lock(path):
+        candidate = build_order_candidate(state)
+        if candidate is None:
+            return None
 
-    append_jsonl(path, candidate)
-    append_jsonl(events_path(), {
-        "created_at": now_text(),
-        "order_id": candidate["id"],
-        "event": "QUEUED",
-        "symbol": candidate["symbol"],
-        "side": candidate["side"],
-        "mode": candidate["mode"],
-        "live_order": False,
-    })
-    return candidate
+        existing_ids = {str(row.get("id", "")) for row in load_recent_jsonl(path)}
+        if candidate["id"] in existing_ids:
+            return None
+
+        append_jsonl(path, candidate)
+        append_jsonl(events_path(), {
+            "created_at": now_text(),
+            "order_id": candidate["id"],
+            "event": "QUEUED",
+            "symbol": candidate["symbol"],
+            "side": candidate["side"],
+            "mode": candidate["mode"],
+            "live_order": False,
+        })
+        return candidate
 
 
 def pending_orders():

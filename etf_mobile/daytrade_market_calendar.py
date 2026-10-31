@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import datetime as dt
 
 MORNING_OPEN = dt.time(9, 0)
@@ -111,3 +112,30 @@ def market_label(now: dt.datetime) -> str:
     if not is_trading_day(now.date()):
         return "休場日"
     return "市場外"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--is-trading-day",
+        nargs="?",
+        const=dt.date.today().isoformat(),
+        metavar="YYYY-MM-DD",
+        help="exit 0 for a trading day and 3 for an exchange holiday",
+    )
+    args = parser.parse_args()
+    if args.is_trading_day is None:
+        parser.print_help()
+        return 0
+
+    try:
+        day = dt.date.fromisoformat(args.is_trading_day)
+    except ValueError:
+        parser.error("--is-trading-day must use YYYY-MM-DD")
+    trading = is_trading_day(day)
+    print(f"{day.isoformat()} trading_day={str(trading).lower()}")
+    return 0 if trading else 3
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
