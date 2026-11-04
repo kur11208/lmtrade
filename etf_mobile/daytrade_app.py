@@ -3,6 +3,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from datetime import datetime
 import csv
 import html
+import hmac
 import json
 import os
 import subprocess
@@ -36,7 +37,7 @@ BACKTEST_FILE = Path("logs") / "daytrade_backtest_results.json"
 RUNTIME_CONFIG_FILE = DATA_DIR / "runtime_config.json"
 PC_WAKE_FILE = DATA_DIR / "pc_wake_state.json"
 
-HOST = "0.0.0.0"
+HOST = os.environ.get("DAYTRADE_HOST", "127.0.0.1").strip() or "127.0.0.1"
 PORT = int(os.environ.get("DAYTRADE_PORT", "8010"))
 CLIENT_DISCONNECT_ERRORS = (BrokenPipeError, ConnectionAbortedError, ConnectionResetError)
 
@@ -1368,7 +1369,9 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         expected_token = os.environ.get("DAYTRADE_FEED_TOKEN", "").strip()
-        if expected_token and self.headers.get("X-Daytrade-Feed-Token", "").strip() != expected_token:
+        supplied_token = self.headers.get("X-Daytrade-Feed-Token", "").strip()
+        # Fail closed: unset or weak configuration never permits unauthenticated market data.
+        if len(expected_token) < 32 or not hmac.compare_digest(supplied_token.encode("utf-8"), expected_token.encode("utf-8")):
             body = json.dumps({"ok": False, "error": "unauthorized"}).encode("utf-8")
             self.send_response_content(401, "application/json; charset=utf-8", body)
             return
