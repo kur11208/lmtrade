@@ -48,19 +48,15 @@ From the PC, deploy/restart after setting the phone SSH environment:
 .\deploy_to_phone.ps1 -Restart
 ```
 
-If SSH is not set up, install the phone puller once and let it keep watching the PC update server:
+**Security update (2026-11-04):** Unauthenticated HTTP update scripts are no longer supported.
+Do not fetch and execute `phone_auto_update.sh` from an HTTP server. The updater now
+requires a locally installed, trusted script plus an HMAC-signed release manifest.
+The publishing script also refuses to run without a private signing key.
 
-```sh
-curl -fsL -o ~/phone_auto_update.sh http://192.168.0.24:8765/phone_auto_update.sh
-nohup sh ~/phone_auto_update.sh http://192.168.0.24:8765 30 >> ~/phone_auto_update_launcher.log 2>&1 &
-```
-
-After that, publish updates on the PC:
-
-```powershell
-cd C:\work\lmtrade\phone_deploy
-.\publish_phone_update.ps1
-```
+See [SECURITY_SETUP.md](../docs/SECURITY_SETUP.md) for one-time trusted SSH deployment,
+key setup, authenticated update publication, and LAN binding instructions.
+Existing phone installations must be redeployed over SSH once; a GitHub push alone
+does not update a previously running, insecure phone updater.
 
 ## Paper runner
 
@@ -187,11 +183,15 @@ Run continuously:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\rakuten_rss_bridge.ps1 -EnabledOnly -Loop -RunRunner -PollSeconds 5
 ```
 
-Push sampled bars to the phone daytrade server:
+Push sampled bars to the phone daytrade server **only after configuring the same
+32+ character private feed token on both devices** and explicitly enabling the
+phone's LAN listener. Without those settings, the endpoint intentionally returns 401.
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\rakuten_rss_bridge.ps1 -EnabledOnly -Loop -PushUrl http://192.168.0.96:8010/feed/bars -PollSeconds 5
+powershell -NoProfile -ExecutionPolicy Bypass -File .\rakuten_rss_bridge.ps1 -EnabledOnly -Loop -PushUrl http://PHONE_LAN_IP:8010/feed/bars -PollSeconds 5
 ```
+
+Store the token outside the repository as described in [SECURITY_SETUP.md](../docs/SECURITY_SETUP.md).
 
 ## SQLite export
 
