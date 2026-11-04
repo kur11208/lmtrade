@@ -92,6 +92,12 @@ if (-not (Test-Path -LiteralPath $BridgeScript)) {
     throw "RSS bridge script not found: $BridgeScript"
 }
 
+if ([string]::IsNullOrWhiteSpace($env:DAYTRADE_FEED_TOKEN)) {
+    $FeedTokenPath = Join-Path $env:USERPROFILE ".config\etf_mobile\feed_token"
+    if (Test-Path -LiteralPath $FeedTokenPath) {
+        $env:DAYTRADE_FEED_TOKEN = [System.IO.File]::ReadAllText($FeedTokenPath).Trim()
+    }
+}
 if ([string]::IsNullOrWhiteSpace($env:DAYTRADE_FEED_TOKEN) -or $env:DAYTRADE_FEED_TOKEN.Length -lt 32) {
     throw "Set DAYTRADE_FEED_TOKEN (minimum 32 characters) on this PC and on the phone before starting the RSS feed."
 }
