@@ -1,15 +1,58 @@
 #!/data/data/com.termux/files/usr/bin/sh
-
 set -eu
 
-ARCHIVE_URL="${1:-http://192.168.0.24:8765/etf_mobile_pull.tar.gz}"
-TMP_ARCHIVE="${TMPDIR:-/data/data/com.termux/files/usr/tmp}/etf_mobile_pull.tar.gz"
+# Only accept a local archive authenticated by the installed auto-updater.
+ARCHIVE="${1:?Supply a verified local archive path (not a URL)}"
+EXPECTED_SHA="${2:?Supply SHA-256 from the HMAC-verified manifest}"
+case "$ARCHIVE" in
+  /*) ;;
+  *) echo "refusing non-absolute archive path" >&2; exit 1 ;;
+esac
+[ -f "$ARCHIVE" ] || { echo "archive not found" >&2; exit 1; }
 
-echo "archive_url=$ARCHIVE_URL"
-mkdir -p "${TMPDIR:-/data/data/com.termux/files/usr/tmp}"
+python - "$ARCHIVE" "$EXPECTED_SHA" <<'PY'
+import hashlib
+import hmac
+import pathlib
+import re
+import sys
+import tarfile
 
-curl -fL -o "$TMP_ARCHIVE" "$ARCHIVE_URL"
-tar -xzf "$TMP_ARCHIVE" -C "$HOME"
+path = pathlib.Path(sys.argv[1])
+expected = sys.argv[2].strip().lower()
+if not re.fullmatch(r"[0-9a-f]{64}", expected):
+    raise SystemExit("invalid expected SHA-256")
+if path.stat().st_size > 40 * 1024 * 1024:
+    raise SystemExit("archive too large")
+sha = hashlib.sha256()
+with path.open("rb") as source:
+    for chunk in iter(lambda: source.read(1024 * 1024), b""):
+        sha.update(chunk)
+if not hmac.compare_digest(sha.hexdigest(), expected):
+    raise SystemExit("archive checksum mismatch")
+with tarfile.open(path, mode="r:gz") as archive:
+    members = archive.getmembers()
+    if len(members) > 300:
+        raise SystemExit("too many archive members")
+    total = 0
+    for item in members:
+        parts = item.name.rstrip("/").split("/")
+        if (
+            item.name.startswith("/")
+            or parts[0] != "etf_mobile"
+            or any(part in ("", ".", "..") for part in parts[1:])
+            or (item.isfile() and len(parts) < 2)
+            or not (item.isfile() or item.isdir())
+            or item.mode & 0o6000
+        ):
+            raise SystemExit("unsafe archive member")
+        total += item.size
+        if total > 80 * 1024 * 1024:
+            raise SystemExit("unpacked archive too large")
+print("archive verified")
+PY
+
+tar -xzf "$ARCHIVE" -C "$HOME"
 
 cd "$HOME/etf_mobile"
 mkdir -p logs
