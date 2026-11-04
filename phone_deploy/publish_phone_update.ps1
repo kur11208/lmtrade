@@ -8,6 +8,12 @@ $ShaFile = Join-Path $PSScriptRoot "etf_mobile_pull.sha256"
 $SigFile = Join-Path $PSScriptRoot "etf_mobile_pull.sha256.hmac"
 
 $HmacKey = $env:LMTRADE_UPDATE_HMAC_KEY
+if ([string]::IsNullOrWhiteSpace($HmacKey)) {
+    $KeyPath = Join-Path $env:USERPROFILE ".config\etf_mobile\update_hmac.key"
+    if (Test-Path -LiteralPath $KeyPath) {
+        $HmacKey = [System.IO.File]::ReadAllText($KeyPath).Trim()
+    }
+}
 if ([string]::IsNullOrWhiteSpace($HmacKey) -or $HmacKey.Length -lt 32) {
     throw "LMTRADE_UPDATE_HMAC_KEY must be a private, random secret of at least 32 characters."
 }
