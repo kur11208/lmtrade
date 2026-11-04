@@ -4,6 +4,7 @@ from datetime import datetime
 import csv
 import html
 import hmac
+import ipaddress
 import json
 import os
 import subprocess
@@ -1338,6 +1339,19 @@ def route_path(raw_path: str) -> str:
 
 
 class Handler(BaseHTTPRequestHandler):
+    def allows_read(self):
+        """Protect device info and trading status from untrusted LAN clients."""
+        try:
+            if ipaddress.ip_address(self.client_address[0]).is_loopback:
+                return True
+        except (AttributeError, IndexError, ValueError):
+            pass
+        expected = read_feed_token()
+        provided = self.headers.get("X-Daytrade-Feed-Token", "").strip()
+        return len(expected) >= 32 and hmac.compare_digest(
+            provided.encode("utf-8"), expected.encode("utf-8")
+        )
+
     def send_response_content(self, status, content_type, body, include_body=True):
         try:
             self.send_response(status)
@@ -1350,6 +1364,12 @@ class Handler(BaseHTTPRequestHandler):
             self.log_message("client disconnected before response completed")
 
     def do_GET(self):
+        if not self.allows_read():
+            self.send_response_content(
+                401, "application/json; charset=utf-8",
+                b'{"ok":false,"error":"unauthorized"}',
+            )
+            return
         path = route_path(self.path)
         if path in ["/status.json", "/health"]:
             payload = build_status_payload()
@@ -1415,6 +1435,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response_content(500, "application/json; charset=utf-8", body)
 
     def do_HEAD(self):
+        if not self.allows_read():
+            self.send_response_content(
+                401, "application/json; charset=utf-8", b"",
+                include_body=False,
+            )
+            return
         path = route_path(self.path)
         if path not in ["/", "/index.html"]:
             body = b"not found\n"
