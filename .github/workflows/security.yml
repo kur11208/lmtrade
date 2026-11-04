@@ -27,6 +27,8 @@ jobs:
           sh -n phone_deploy/phone_pull_update.sh
       - name: Feed authentication regression tests
         run: python -m unittest discover -s etf_mobile -p 'test_security_feed.py' -v
+      - name: Update-server allowlist regression tests
+        run: python -m unittest discover -s phone_deploy -p 'test_secure_server.py' -v
       - name: No unauthenticated remote update script execution
         run: |
           if grep -E 'curl.*phone_pull_update.sh' etf_mobile/phone_auto_update.sh; then exit 1; fi
