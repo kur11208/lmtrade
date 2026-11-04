@@ -43,5 +43,36 @@ class FeedAuthenticationTests(unittest.TestCase):
             self.assertEqual(responses, [200])
 
 
+class ReadAuthenticationTests(unittest.TestCase):
+    def test_remote_read_requires_token(self):
+        with patch.dict(os.environ, {"DAYTRADE_FEED_TOKEN": "A" * 40}):
+            handler, responses = make_handler()
+            handler.path = "/device.json"
+            handler.client_address = ("192.168.0.20", 12345)
+            handler.do_GET()
+            self.assertEqual(responses, [401])
+            handler, responses = make_handler()
+            handler.path = "/"
+            handler.client_address = ("192.168.0.20", 12345)
+            handler.do_HEAD()
+            self.assertEqual(responses, [401])
+
+    def test_local_read_stays_accessible(self):
+        with patch.dict(os.environ, {}, clear=True):
+            handler, responses = make_handler()
+            handler.path = "/not-found"
+            handler.client_address = ("127.0.0.1", 12345)
+            handler.do_GET()
+            self.assertEqual(responses, [404])
+
+    def test_remote_authenticated_read(self):
+        with patch.dict(os.environ, {"DAYTRADE_FEED_TOKEN": "A" * 40}):
+            handler, responses = make_handler("A" * 40)
+            handler.path = "/not-found"
+            handler.client_address = ("192.168.0.20", 12345)
+            handler.do_GET()
+            self.assertEqual(responses, [404])
+
+
 if __name__ == "__main__":
     unittest.main()
