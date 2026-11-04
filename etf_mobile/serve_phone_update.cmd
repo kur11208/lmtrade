@@ -15,4 +15,4 @@ if "%LMTRADE_UPDATE_BIND_HOST%"=="0.0.0.0" (
 )
 cd /d "%PUBLISH_DIR%"
 echo Serving Git-tracked, signed update artifacts on %LMTRADE_UPDATE_BIND_HOST%:8765
-python -m http.server 8765 --bind "%LMTRADE_UPDATE_BIND_HOST%"
+python serve_signed_updates.py --host "%LMTRADE_UPDATE_BIND_HOST%" --port 8765
