@@ -4,12 +4,13 @@ from datetime import datetime, timedelta
 import csv
 import html
 import json
+import os
 import re
 
 DATA_DIR = Path("data")
 SYMBOLS_FILE = DATA_DIR / "symbols.json"
 
-HOST = "0.0.0.0"
+HOST = os.environ.get("ETF_APP_HOST", "127.0.0.1").strip() or "127.0.0.1"
 PORT = 8000
 CLIENT_DISCONNECT_ERRORS = (BrokenPipeError, ConnectionAbortedError, ConnectionResetError)
 
