@@ -15,6 +15,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+if (-not [string]::IsNullOrWhiteSpace($PushUrl) -and [string]::IsNullOrWhiteSpace($PushToken)) {
+    $FeedTokenPath = Join-Path $env:USERPROFILE ".config\etf_mobile\feed_token"
+    if (Test-Path -LiteralPath $FeedTokenPath) {
+        $PushToken = [System.IO.File]::ReadAllText($FeedTokenPath).Trim()
+    }
+}
 if (-not [string]::IsNullOrWhiteSpace($PushUrl) -and $PushToken.Length -lt 32) {
     throw "DAYTRADE_FEED_TOKEN must contain at least 32 characters before sending feed data."
 }
