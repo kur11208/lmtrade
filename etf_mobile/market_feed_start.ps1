@@ -92,6 +92,10 @@ if (-not (Test-Path -LiteralPath $BridgeScript)) {
     throw "RSS bridge script not found: $BridgeScript"
 }
 
+if ([string]::IsNullOrWhiteSpace($env:DAYTRADE_FEED_TOKEN) -or $env:DAYTRADE_FEED_TOKEN.Length -lt 32) {
+    throw "Set DAYTRADE_FEED_TOKEN (minimum 32 characters) on this PC and on the phone before starting the RSS feed."
+}
+
 Stop-StaleBridge
 
 if (-not (Get-Process -Name MarketSpeed2 -ErrorAction SilentlyContinue)) {
