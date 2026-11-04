@@ -52,7 +52,20 @@ function Write-AutoPowerFlag {
 
 function Test-RecentPhoneWake {
     try {
-        $payload = Invoke-RestMethod -Uri $PhoneWakeUrl -TimeoutSec 5
+        $wakeToken = $env:DAYTRADE_FEED_TOKEN
+        if ([string]::IsNullOrWhiteSpace($wakeToken)) {
+            $tokenPath = Join-Path $env:USERPROFILE ".config\etf_mobile\feed_token"
+            if (Test-Path -LiteralPath $tokenPath) {
+                $wakeToken = [System.IO.File]::ReadAllText($tokenPath).Trim()
+            }
+        }
+        if ([string]::IsNullOrWhiteSpace($wakeToken) -or $wakeToken.Length -lt 32) {
+            Write-FeedLog "phone wake status requires an authenticated request"
+            return $false
+        }
+        $payload = Invoke-RestMethod -Uri $PhoneWakeUrl -TimeoutSec 5 -Headers @{
+            "X-Daytrade-Feed-Token" = $wakeToken
+        }
         if (-not $payload.ok) {
             Write-FeedLog "phone wake flag unavailable"
             return $false
