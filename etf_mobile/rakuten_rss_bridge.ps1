@@ -10,10 +10,14 @@ param(
     [int]$ConnectTimeoutSeconds = 45,
     [string]$WorkbookPath = "",
     [string]$PushUrl = "",
-    [string]$PushToken = ""
+    [string]$PushToken = $env:DAYTRADE_FEED_TOKEN
 )
 
 $ErrorActionPreference = "Stop"
+
+if (-not [string]::IsNullOrWhiteSpace($PushUrl) -and $PushToken.Length -lt 32) {
+    throw "DAYTRADE_FEED_TOKEN must contain at least 32 characters before sending feed data."
+}
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $DataDir = Join-Path $ScriptDir "data_daytrade"
