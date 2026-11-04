@@ -10,6 +10,7 @@ import daytrade_runner as runner
 RESULTS_FILE = Path("logs") / "daytrade_backtest_results.json"
 
 
+# 価格データを先頭から順に処理し、各時刻の売買状態を再生する。
 def replay_bars(symbol: str, bars: list[dict], settings: dict):
     """Replay one independent instrument using only the visible price prefix.
 
@@ -19,11 +20,14 @@ def replay_bars(symbol: str, bars: list[dict], settings: dict):
     if settings.get("use_market_filter"):
         raise ValueError("In-memory replay does not support cross-instrument market filters")
     state = runner.fresh_state(symbol)
+    # fresh_state() で状態を初期化し、見えている足だけを visible にためる。
     visible = []
     for bar in bars:
         if visible and bar["ts"] <= visible[-1]["ts"]:
             raise ValueError("Replay timestamps must be strictly increasing")
+        # 今到着した足を追加してから、その時点での判断を計算する。
         visible.append(bar)
+        # 売買判断の本体。固定設定を渡し、口座全体のリスク判定は省略する。
         state = runner.process_bar(
             symbol, state, visible, bar,
             settings_override=settings,
@@ -31,9 +35,11 @@ def replay_bars(symbol: str, bars: list[dict], settings: dict):
         )
         # The replay clock is market time, including operational display fields.
         state["last_runner_at"] = bar["timestamp"]
+        # 状態が後から更新されても過去の記録が変わらないよう、コピーを返す。
         yield copy.deepcopy(state)
 
 
+# 過去の最高資産からの下落率のうち、最も大きい下落を求める。
 def max_drawdown(values: list[float]) -> float:
     if not values:
         return 0.0
