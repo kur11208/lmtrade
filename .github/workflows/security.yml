@@ -1,0 +1,33 @@
+name: Security regression checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  security:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Validate Python and update scripts
+        run: |
+          python -m compileall -q etf_mobile
+          sh -n etf_mobile/phone_auto_update.sh
+          sh -n etf_mobile/phone_pull_update.sh
+          sh -n phone_deploy/phone_auto_update.sh
+          sh -n phone_deploy/phone_pull_update.sh
+      - name: Feed authentication regression tests
+        run: python -m unittest discover -s etf_mobile -p 'test_security_feed.py' -v
+      - name: No unauthenticated remote update script execution
+        run: |
+          if grep -E 'curl.*phone_pull_update.sh' etf_mobile/phone_auto_update.sh; then exit 1; fi
+          if grep -E 'curl.*phone_pull_update.sh' phone_deploy/phone_auto_update.sh; then exit 1; fi
