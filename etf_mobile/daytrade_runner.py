@@ -373,6 +373,7 @@ def load_symbol_settings(symbol: str) -> dict:
     return settings
 
 
+# 1本の価格データを、日時オブジェクトを含むエンジン共通形式に変換する。
 def normalize_bar(row: dict):
     ts = parse_ts(row.get("timestamp"))
     close = parse_float(row.get("close"), None)
@@ -492,6 +493,7 @@ def day_bars_until(all_bars: list[dict], bar: dict) -> list[dict]:
     return [x for x in all_bars if x["date"] == date_s and x["ts"] <= limit]
 
 
+# この実装のVWAPは終値を出来高で加重平均する簡易指標。
 def calc_vwap(rows: list[dict]) -> float | None:
     if not rows:
         return None
@@ -501,6 +503,7 @@ def calc_vwap(rows: list[dict]) -> float | None:
     return sum(row["close"] for row in rows) / len(rows)
 
 
+# 寄り付きから指定分数の高値・安値を求め、判定時間を過ぎたかも返す。
 def calc_opening_range(
     rows: list[dict],
     minutes: int,
@@ -531,6 +534,7 @@ def calc_opening_range(
     return high, low, done, recovered
 
 
+# 寄り付きデータの本数・時刻間隔などを確認し、問題があれば理由を返す。
 def opening_range_unavailable_reason(
     rows: list[dict],
     minutes: int,
@@ -1286,6 +1290,7 @@ def update_trailing_stop(state: dict, bar: dict, settings: dict):
     return state
 
 
+# 新規エントリーの前に、データ品質・取引回数・時間帯などの禁止条件を確認する。
 def entry_block_reason(state: dict, bar: dict, settings: dict, opening_range_done: bool, rows_today: list[dict]):
     missing_reason = opening_range_unavailable_reason(
         rows_today,
@@ -1304,6 +1309,7 @@ def entry_block_reason(state: dict, bar: dict, settings: dict, opening_range_don
         return "opening range is still forming"
 
     max_trades = max(0, parse_int(settings.get("max_trades_per_day"), DEFAULT_SETTINGS["max_trades_per_day"]))
+    # デモ設定は1日1回まで。決済後も売買回数はリセットされない。
     if max_trades and parse_int(state.get("trade_count_today"), 0) >= max_trades:
         return "max trades per day reached"
 
@@ -1350,6 +1356,7 @@ def portfolio_entry_block_reason(proposed_weight: float, bar: dict) -> str:
         return ""
 
 
+# 価格・VWAP・寄り付き高安から、買い/空売りのセットアップを選ぶ。
 def choose_entry_setup(state: dict, bar: dict, rows_today: list[dict], settings: dict):
     mode = str(settings.get("strategy_mode", DEFAULT_SETTINGS["strategy_mode"])).strip().lower()
     allow_long = parse_bool(settings.get("allow_long"), DEFAULT_SETTINGS["allow_long"])
@@ -1424,6 +1431,7 @@ def calc_stop_price(setup_name: str, bar: dict, state: dict, settings: dict) -> 
     return min(bar["close"] * 0.999, raw_stop)
 
 
+# 損切り幅・許容リスク・流動性から、投入資金の比率を決める。
 def calc_position_weight(bar: dict, state: dict, settings: dict, entry_price: float, stop_price: float):
     risk_per_trade = clamp(settings.get("risk_per_trade_rate"), 0.0, 0.20, DEFAULT_SETTINGS["risk_per_trade_rate"])
     max_position_w = clamp(settings.get("max_position_w"), 0.0, 1.0, DEFAULT_SETTINGS["max_position_w"])
@@ -1442,6 +1450,7 @@ def calc_position_weight(bar: dict, state: dict, settings: dict, entry_price: fl
     return position_w, ""
 
 
+# 1分足ごとに指標を更新し、エントリー・保有・決済の状態を遷移させる中心関数。
 def process_bar(
     symbol: str,
     state: dict,
@@ -1475,6 +1484,7 @@ def process_bar(
         parse_int(settings.get("max_expected_bar_gap_minutes"), DEFAULT_SETTINGS["max_expected_bar_gap_minutes"]),
     )
 
+    # この時刻までに見えている足だけで指標を計算し、未来情報を混入させない。
     rows_today = rows_today_override if rows_today_override is not None else day_bars_until(all_bars, bar)
     vwap = calc_vwap(rows_today)
     or_high, or_low, opening_range_done, recovered_opening_range = calc_opening_range(
@@ -1629,6 +1639,7 @@ def process_bar(
         state["signal"] = "WAIT"
         state["strategy_reason"] = "waiting"
 
+        # 取引回数やデータ不足で禁止されていたら、新規売買は行わない。
         block_reason = entry_block_reason(state, bar, settings, opening_range_done, rows_today)
         if block_reason:
             state["strategy_reason"] = block_reason
