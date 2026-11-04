@@ -17,9 +17,11 @@ from daytrade_backtest import max_drawdown, replay_bars
 import daytrade_runner as runner
 
 
+# データや画面ファイルは実行場所ではなく、このソースの場所から探す。
 ROOT = Path(__file__).resolve().parent
 FIXTURES = ROOT / "interview_fixtures"
 WEB = ROOT / "interview_web"
+# 3つの独立した架空データ：内部キー、画面表示名、架空銘柄名の順。
 SCENARIOS = (
     ("trend", "上昇", "DEMO-A"),
     ("reversal", "下抜け後の反転", "DEMO-B"),
@@ -27,6 +29,7 @@ SCENARIOS = (
 )
 
 
+# Windows などで同じポートを別サーバーと共有しないための設定。
 class DemoHTTPServer(ThreadingHTTPServer):
     allow_reuse_address = False
 
@@ -37,34 +40,48 @@ class DemoHTTPServer(ThreadingHTTPServer):
         super().server_bind()
 
 
+# CSVを1行ずつ検証してから、売買エンジンが使える1分足のリストにする。
 def load_fixture(path: Path) -> list[dict]:
     """Fail visibly on corrupt data rather than silently repairing demo input."""
+    # DictReader は先頭行を列名として扱う。値はまだ文字列のまま。
     with path.open(encoding="utf-8", newline="") as source:
         rows = list(csv.DictReader(source))
+    # 空のCSVは正常な価格データとはみなさない。
     if not rows:
         raise ValueError(f"Empty fixture: {path.name}")
     bars = []
+    # 最初の行だけでなく、全データ行について以下の検証を繰り返す。
     for row in rows:
+        # OHLCV（始値・高値・安値・終値・出来高）を数値へ変換する。
         values = [float(row[key]) for key in ("open", "high", "low", "close", "volume")]
         o, h, low, c, volume = values
+        # NaN・無限大を拒否する。途中で失敗したら行を飛ばさず例外にする。
         if not all(math.isfinite(value) for value in values):
             raise ValueError(f"Non-finite value: {path.name}")
+        # 価格は正、安値は始値/終値以下、高値は始値/終値以上、出来高は非負。
         if min(o, h, low, c) <= 0 or low > min(o, c) or h < max(o, c) or volume < 0:
             raise ValueError(f"Invalid OHLCV: {path.name}")
+        # 文字列の日時などをエンジン共通の辞書形式へ正規化する。
         bar = runner.normalize_bar(row)
+        # 日時が不正、または前の足と同時刻・逆順なら停止する。
         if bar is None or (bars and bar["ts"] <= bars[-1]["ts"]):
             raise ValueError(f"Invalid or unordered timestamp: {path.name}")
         bars.append(bar)
     return bars
 
 
+# 1つのシナリオを再生し、画面表示用の時系列・約定・取引履歴を作る。
 def build_scenario(key: str, title: str, symbol: str, settings: dict) -> dict:
     bars = load_fixture(FIXTURES / f"{key}.csv")
+    # 1分足を順に売買エンジンへ渡し、各時刻の状態を一覧にする。
     states = list(replay_bars(symbol, bars, settings))
     capital = settings["sim_capital_yen"]
+    # frames=毎分の表示情報、fills=新規/決済イベント、trades=決済済み取引。
     frames, fills, trades = [], [], []
+    # 同じ時刻の価格(bar)と判断結果(state)を組にして処理する。
     for index, (bar, state) in enumerate(zip(bars, states)):
         signal = state["signal"]
+        # WAITやHOLDは約定ではないため、ENTRY/EXITのときだけ記録する。
         if signal in ("ENTRY", "EXIT"):
             fills.append({
                 "timestamp": bar["timestamp"], "index": index, "signal": signal,
@@ -72,6 +89,7 @@ def build_scenario(key: str, title: str, symbol: str, settings: dict) -> dict:
                 "price": state["entry_price"] if signal == "ENTRY" else state["exit_price"],
                 "weight": state["current_w_today"] if signal == "ENTRY" else state["last_exit_w"],
             })
+        # 決済済み取引が増えたら、開始時の資産を参照して損益を円で計算する。
         if len(state["recent_trades"]) > len(trades):
             entry_frame = next(row for row in frames if row["timestamp"] == state["recent_trades"][-1]["entry_ts"])
             prior_equity = states[entry_frame["index"]]["trade_start_equity"]
@@ -82,6 +100,7 @@ def build_scenario(key: str, title: str, symbol: str, settings: dict) -> dict:
                 "pnl_yen": capital * (state["equity"] - prior_equity),
             })
             trades.append(trade)
+        # ブラウザの再生画面が参照する、現時刻のスナップショット。
         frames.append({
             "index": index, "timestamp": bar["timestamp"],
             "open": bar["open"], "high": bar["high"], "low": bar["low"],
@@ -99,6 +118,7 @@ def build_scenario(key: str, title: str, symbol: str, settings: dict) -> dict:
             "wins": state["win_count"], "losses": state["loss_count"],
             "drawdown": max_drawdown([1.0] + [s["equity"] for s in states[:index + 1]]),
         })
+    # デモの終了時には未決済ポジションが残っていないことを確認する。
     final = states[-1]
     if final["current_position_today"] != "FLAT":
         raise ValueError(f"Fixture ended with an open position: {key}")
@@ -106,8 +126,10 @@ def build_scenario(key: str, title: str, symbol: str, settings: dict) -> dict:
             "fills": fills, "trades": trades}
 
 
+# 共通設定の下で3つのシナリオを独立に再生し、まとめて返す。
 def build_demo() -> dict:
     settings = json.loads((FIXTURES / "settings.json").read_text(encoding="utf-8"))
+    # 設定キーの追加・削除を見逃さず、デモ結果の暗黙の変更を防ぐ。
     if set(settings) != set(runner.DEFAULT_SETTINGS):
         raise ValueError("Fixture settings must explicitly pin every engine setting")
     if settings["use_market_filter"] or settings["partial_exit_rate"] != 0:
@@ -119,14 +141,17 @@ def build_demo() -> dict:
         "settings": settings,
         "scenarios": [build_scenario(*scenario, settings) for scenario in SCENARIOS],
     }
+    # 出力内容のハッシュ。入力・設定・計算結果の再現性を比較できる。
     body["fingerprint"] = hashlib.sha256(encode_json(body)).hexdigest()
     return body
 
 
+# JSONを決まったキー順・形式でシリアライズし、毎回同じバイト列にする。
 def encode_json(value: dict) -> bytes:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False, separators=(",", ":")).encode("utf-8")
 
 
+# シミュレーションを先に全計算し、HTTPでは結果と画面だけを配信する。
 def create_server(port: int = 8765) -> ThreadingHTTPServer:
     """Compute before accepting requests; HTTP can only read fixed results/assets."""
     payload = encode_json(build_demo())
@@ -138,6 +163,7 @@ def create_server(port: int = 8765) -> ThreadingHTTPServer:
         "/download.json": (payload, "application/json; charset=utf-8"),
     }
 
+    # このデモは既知のGET/HEADだけを扱い、注文・更新APIは作らない。
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             self.respond(False)
@@ -169,12 +195,14 @@ def create_server(port: int = 8765) -> ThreadingHTTPServer:
     return DemoHTTPServer(("127.0.0.1", port), Handler)
 
 
+# 起動オプションを処理し、検証だけ実行するか画面用サーバーを立ち上げる。
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--check", action="store_true", help="verify replay determinism without starting HTTP")
     args = parser.parse_args()
+    # --check はサーバーを起動せず、同じ入力で同じ結果になるか検証する。
     if args.check:
         first = build_demo()
         if encode_json(first) != encode_json(build_demo()):
@@ -187,6 +215,7 @@ def main() -> int:
         parser.error("--port must be between 0 and 65535")
     server = None
     # Never terminate another application when the default port is occupied.
+    # 既定ポートが埋まっていれば後続ポートを試し、他プロセスは終了させない。
     candidates = range(8765, 8775) if args.port == 8765 else [args.port]
     for candidate in candidates:
         try:
