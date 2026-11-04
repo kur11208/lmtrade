@@ -42,6 +42,18 @@ PORT = int(os.environ.get("DAYTRADE_PORT", "8010"))
 CLIENT_DISCONNECT_ERRORS = (BrokenPipeError, ConnectionAbortedError, ConnectionResetError)
 
 
+def read_feed_token() -> str:
+    """Load the secret from the process or a private, untracked Termux config file."""
+    token = os.environ.get("DAYTRADE_FEED_TOKEN", "").strip()
+    if token:
+        return token
+    path = Path.home() / ".config" / "etf_mobile" / "feed_token"
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
 def read_text_auto(path: Path) -> str:
     for enc in ("utf-8-sig", "utf-8"):
         try:
@@ -1368,7 +1380,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response_content(404, "application/json; charset=utf-8", body)
             return
 
-        expected_token = os.environ.get("DAYTRADE_FEED_TOKEN", "").strip()
+        expected_token = read_feed_token()
         supplied_token = self.headers.get("X-Daytrade-Feed-Token", "").strip()
         # Fail closed: unset or weak configuration never permits unauthenticated market data.
         if len(expected_token) < 32 or not hmac.compare_digest(supplied_token.encode("utf-8"), expected_token.encode("utf-8")):
